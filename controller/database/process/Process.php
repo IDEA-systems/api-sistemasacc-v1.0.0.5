@@ -141,6 +141,7 @@ class Process extends Messenger
             ON clientes_servicios.colonia = colonias.colonia_id
             WHERE DATE(negociaciones.fecha_fin) <= DATE(CURRENT_DATE())
             AND DATEDIFF(CURRENT_DATE(), negociaciones.fecha_fin) >= 0
+            AND negociaciones.status_negociacion = 1
             AND clientes_servicios.cliente_status = 4
             AND NOT EXISTS ( 
                 SELECT pagos.pago_id FROM pagos 
