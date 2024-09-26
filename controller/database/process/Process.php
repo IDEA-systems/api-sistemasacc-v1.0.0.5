@@ -132,13 +132,37 @@ class Process extends Messenger
         $IN_PERIODS = $this->transform_array_string_in_sql($periods);
 
         $query = Flight::gnconn()->prepare("
-            SELECT * FROM clientes 
+            SELECT 
+                negociaciones.id_negociacion,
+                clientes.cliente_id,
+                clientes.cliente_nombres,
+                clientes.cliente_apellidos,
+                clientes.cliente_telefono,
+                clientes.metodo_bloqueo,
+                clientes.interface_arp,
+                clientes.server,
+                clientes.profile,
+                clientes.user_pppoe,
+                clientes.password_pppoe,
+                clientes.cliente_ip,
+                clientes_servicios.suspender,
+                mikrotiks.mikrotik_ip,
+                mikrotiks.mikrotik_usuario,
+                mikrotiks.mikrotik_password,
+                mikrotiks.mikrotik_puerto,
+                mikrotiks.mikrotik_nombre,
+                mikrotiks.mikrotik_id,
+                colonias.nombre_colonia,
+                colonias.colonia_id
+            FROM clientes 
             LEFT JOIN negociaciones 
             ON clientes.cliente_id = negociaciones.cliente_id 
             INNER JOIN clientes_servicios 
             ON clientes.cliente_id = clientes_servicios.cliente_id 
             INNER JOIN colonias 
             ON clientes_servicios.colonia = colonias.colonia_id
+            INNER JOIN mikrotiks
+            ON colonias.mikrotik_control = mikrotiks.mikrotik_id
             WHERE DATE(negociaciones.fecha_fin) <= DATE(CURRENT_DATE())
             AND DATEDIFF(CURRENT_DATE(), negociaciones.fecha_fin) >= 0
             AND negociaciones.status_negociacion = 1
@@ -184,7 +208,7 @@ class Process extends Messenger
         $template = $this->get_templates('negociacion_terminada');
         $brand = $this->get_brand();
 
-        $list = "";
+        $suspended = "";
 
         if (!empty($customers)) {
             $this->suspended_negociation = $this->config_status(4);
@@ -197,10 +221,11 @@ class Process extends Messenger
                 $this->whatsapp($data, $customer['cliente_id'], 'end_negociation');
                 $this->change_status_customer($customer['cliente_id'], $cliente_status);
                 $this->change_status_negociation($customer['cliente_id'], $customer['id_negociacion']);
-                $list .= "$nombres : ".$customer["nombre_colonia"]."\n";
+                $suspended .= "$nombres : ".$customer["nombre_colonia"]."\n";
+                $this->disabled_service($customer);
             }
 
-            $params = ["phone" => $brand[0]["codigo_pais"].$brand[0]["phone"], "message" => "*Negociaciones suspendidas*\n\n".$list];
+            $params = ["phone" => $brand[0]["codigo_pais"].$brand[0]["phone"], "message" => "*Negociaciones suspendidas*\n\n".$suspended];
             $this->whatsapp($params, 'ADMIN', 'negociation_finally');
         }
         $this->end_process('negociacion');
@@ -548,6 +573,63 @@ class Process extends Messenger
         return $rows;
     }
 
+
+
+    public function disabled_service($customer) {
+        $cliente_nombres = $customer["cliente_nombres"]." ".$customer["cliente_apellidos"];
+
+        $conn = new Mikrotik(
+            $customer["mikrotik_ip"],
+            $customer["mikrotik_usuario"],
+            $customer["mikrotik_password"],
+            $customer["mikrotik_puerto"]
+        );
+
+        if (!$conn->connected) {
+            $this->error = true;
+            $this->error_message = "Mikrotik error " . $customer["mikrotik_nombre"];
+            $this->morosos = false;
+            return $this->morosos;
+        }
+
+        if ($conn->connected) {
+            switch($customer['metodo_bloqueo']) {
+                case 'DHCP':
+                    $conn->add_from_address_list(
+                        $cliente_nombres,
+                        $customer['cliente_ip'],
+                        "MOROSOS"
+                    );
+                    $conn->disconnect();
+                break;
+    
+                case 'ARP':
+                    $conn->add_from_address_list(
+                        $cliente_nombres,
+                        $customer['cliente_ip'],
+                        "MOROSOS"
+                    );
+                    $conn->disconnect();
+                break;
+    
+                case 'PPPOE':
+                    $conn->disabled_secret(
+                        $customer['user_pppoe'],
+                        $customer['profile']
+                    );
+    
+                    $this->morosos = $conn->remove_customer_actives(
+                        $customer["user_pppoe"],
+                        $customer['profile']
+                    );
+                    $conn->disconnect();
+                break;
+                default: // NO HACER NADA
+            }
+        }
+    }
+
+
     
     /**
      * suspension
@@ -557,58 +639,8 @@ class Process extends Messenger
     public function suspension()
     {
         $customers = $this->get_customers_suspended();
-        for ($i = 0; $i < count($customers); $i++) {
-            $cliente_nombres = $customers[$i]["cliente_nombres"]." ".$customers[$i]["cliente_apellidos"];
-
-            $conn = new Mikrotik(
-                $customers[$i]["mikrotik_ip"],
-                $customers[$i]["mikrotik_usuario"],
-                $customers[$i]["mikrotik_password"],
-                $customers[$i]["mikrotik_puerto"]
-            );
-
-            if (!$conn->connected) {
-                $this->error = true;
-                $this->error_message = "Mikrotik error " . $customers[$i]["mikrotik_nombre"];
-                $this->morosos = false;
-                return $this->morosos;
-            }
-
-            if ($conn->connected) {
-                switch($customers[$i]['metodo_bloqueo']) {
-                    case 'DHCP':
-                        $conn->add_from_address_list(
-                            $cliente_nombres,
-                            $customers[$i]['cliente_ip'],
-                            "MOROSOS"
-                        );
-                        $conn->disconnect();
-                    break;
-        
-                    case 'ARP':
-                        $conn->add_from_address_list(
-                            $cliente_nombres,
-                            $customers[$i]['cliente_ip'],
-                            "MOROSOS"
-                        );
-                        $conn->disconnect();
-                    break;
-        
-                    case 'PPPOE':
-                        $conn->disabled_secret(
-                            $customers[$i]['user_pppoe'],
-                            $customers[$i]['profile']
-                        );
-        
-                        $this->morosos = $conn->remove_customer_actives(
-                            $customers[$i]["user_pppoe"],
-                            $customers[$i]['profile']
-                        );
-                        $conn->disconnect();
-                    break;
-                    default: // NO HACER NADA
-                }
-            }
+        foreach ($customers as $customer) {
+            $this->disabled_service($customer);
         }
     }
 
