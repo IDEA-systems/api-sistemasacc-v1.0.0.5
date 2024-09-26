@@ -539,12 +539,14 @@ class Instalations extends Messenger {
                 CONCAT(promotores.empleado_nombre, ' ', promotores.empleado_apellido) AS nombre_promotor,
                 tecnico.usuario_id AS usuario_tecncio,
                 captura.usuario_id AS usuario_captura,
-                clientes.cliente_id AS registro_id,
+                clientes.cliente_telefono AS registro_telefono,
+                clientes.cliente_email AS registro_email,
                 instalaciones.*,
                 status_instalaciones.*
             FROM instalaciones 
             LEFT JOIN clientes 
-            ON instalaciones.cliente_id = clientes.cliente_id
+            ON instalaciones.cliente_telefono = clientes.cliente_telefono
+            AND instalaciones.cliente_email = clientes.cliente_email
             INNER JOIN empleados as promotores 
             ON instalaciones.promotor_id = promotores.empleado_id
             INNER JOIN status_instalaciones
@@ -646,9 +648,14 @@ class Instalations extends Messenger {
                 tecnico.usuario_id AS usuario_tecncio,
                 tecnico.empleado_telefono AS tecnico_telefono,
                 captura.usuario_id AS usuario_captura,
+                clientes.cliente_telefono AS registro_telefono,
+                clientes.cliente_email AS registro_email,
                 instalaciones.*,
                 status_instalaciones.*
             FROM instalaciones 
+            LEFT JOIN clientes 
+            ON instalaciones.cliente_telefono = clientes.cliente_telefono
+            AND instalaciones.cliente_email = clientes.cliente_email
             INNER JOIN empleados as promotores 
             ON instalaciones.promotor_id = promotores.empleado_id
             INNER JOIN status_instalaciones
