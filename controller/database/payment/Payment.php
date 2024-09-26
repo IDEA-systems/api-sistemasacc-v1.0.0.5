@@ -571,7 +571,7 @@ class Payment extends Messenger
         if (!is_null($search)) {
             $SQL .= " 
                 AND CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) LIKE '%$search%'
-                OR CONCAT(mpleados.empleado_nombre, ' ', empleados.empleado_apellido) LIKE '%$search%'
+                OR CONCAT(empleados.empleado_nombre, ' ', empleados.empleado_apellido) LIKE '%$search%'
                 OR pagos.pago_folio LIKE '%$search%'
             ";
         }
