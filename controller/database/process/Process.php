@@ -134,6 +134,7 @@ class Process extends Messenger
         $query = Flight::gnconn()->prepare("
             SELECT 
                 negociaciones.id_negociacion,
+                negociaciones.fecha_fin,
                 clientes.cliente_id,
                 clientes.cliente_nombres,
                 clientes.cliente_apellidos,
