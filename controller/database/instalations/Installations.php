@@ -225,6 +225,23 @@ class Instalations extends Messenger {
             : $this->generate_customer_id();
     }
 
+
+    public function search_customer_by_name() : array
+    {
+        $query = Flight::gnconn()->prepare("
+            SELECT * FROM clientes
+            WHERE LOWER(cliente_nombres) = ?
+            AND LOWER(cliente_apellidos) = ?
+            AND cliente_id != ?
+        ");
+        $query->execute([ 
+            $this->cliente_nombres, 
+            $this->cliente_apellidos,
+            $this->cliente_id
+        ]);
+        $rows = $query->fetchAll();
+        return $rows;
+    }
     
     /**
      * search_installation_by_phone
@@ -390,6 +407,7 @@ class Instalations extends Messenger {
             return;
         }
 
+        $customer_name = $this->search_customer_by_name();
         $phone_installation = $this->search_installation_by_phone();
         $phone_customer = $this->search_customer_by_phone();
         $email_installation = $this->search_installation_by_email();
@@ -398,7 +416,8 @@ class Instalations extends Messenger {
         $is_registered = !empty($phone_installation) || 
             !empty($phone_customer) || 
             !empty($email_installation) || 
-            !empty($email_customer);
+            !empty($email_customer) ||
+            !empty($customer_name);
 
         if ($is_registered) {
             $this->error = true;
@@ -516,15 +535,15 @@ class Instalations extends Messenger {
     public function get_all_instalations($filters) : array
     {
         $search = isset($filters["search"]) ? $filters["search"] : null;
-        $status = isset($filters["status"]) ? $filters["status"] : null;
+        $status = isset($filters["status"]) && strlen($filters["status"]) < 12 ? $filters["status"] : 'IN(1,2,3,4)';
         $cliente_id = isset($filters["cliente_id"]) ? $filters["cliente_id"] : null;
         $promotor_id = isset($filters["promotor_id"]) ? $filters["promotor_id"] : null;
         $tecnico_asignado = isset($filters["tecnico_asignado"]) ? $filters["tecnico_asignado"] : null;
-        $colonia_id = isset($filters["colonia_id"]) ? $filters["colonia_id"] : null;
         $fecha_agenda = isset($filters["fecha_agenda"]) ? $filters["fecha_agenda"] : null;
         $horario_id = isset($filters["horario_id"]) ? $filters["horario_id"] : null;
         $fecha_realizacion = isset($filters["fecha_realizacion"]) ? $filters["fecha_realizacion"] : null;
         $fecha_finalizacion = isset($filters["fecha_finalizacion"]) ? $filters["fecha_finalizacion"] : null;
+        // $colonia_id = isset($filters["colonia_id"]) ? $filters["colonia_id"] : null;
         // $pagina = $filters["pagina"];
         // $empleado_captura = $filters["empleado_captura"];
         // $empleado_finalizacion = $filters["empleado_finalizacion"];
@@ -555,8 +574,8 @@ class Instalations extends Messenger {
             ON instalaciones.tecnico_asignado = tecnico.empleado_id
             LEFT JOIN empleados AS captura
             ON instalaciones.empleado_captura = captura.empleado_id
-            WHERE YEAR(fecha_recepcion) = YEAR(current_date)
-        ";
+            WHERE instalaciones.status $status
+        ";        
 
         if (!is_null($cliente_id)) {
             $SQL .= " AND instalaciones.cliente_id = '$cliente_id' ";
@@ -571,7 +590,7 @@ class Instalations extends Messenger {
         }
 
         if (!is_null($fecha_agenda)) {
-            $SQL .= " AND instalaciones.fecha_programada = '$fecha_agenda' ";
+            $SQL .= " AND DATE(instalaciones.fecha_programada) = DATE('$fecha_agenda') ";
         }
 
         if (!is_null($horario_id)) {
@@ -584,10 +603,6 @@ class Instalations extends Messenger {
 
         if (!is_null($fecha_finalizacion)) {
             $SQL .= " AND DATE(instalaciones.fecha_finalizacion) = '$fecha_finalizacion' ";
-        }
-
-        if (!is_null($status)) {
-            $SQL .= " AND instalaciones.status = $status ";
         }
 
         if (!is_null($search)) {
@@ -607,7 +622,7 @@ class Instalations extends Messenger {
             ";
         }
 
-        $SQL .= " ORDER BY instalaciones.status ASC";
+        $SQL .= " ORDER BY instalaciones.instalacion_id DESC";
 
         $query = Flight::gnconn()->prepare($SQL);
         $query->execute();
