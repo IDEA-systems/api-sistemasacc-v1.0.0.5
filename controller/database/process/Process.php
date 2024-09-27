@@ -521,6 +521,7 @@ class Process extends Messenger
                 ? $this->get_before_periods()
                 : $this->get_to_periods();
             $this->layoff_in_database($periods, $cortes["dia_pago"]);
+            $this->suspension($periods, $cortes["dia_pago"]);
 
             if (!$this->error) continue;
             if ($this->error) {
@@ -554,11 +555,12 @@ class Process extends Messenger
      *
      * @return array
      */
-    public function get_customers_suspended() : array
+    public function get_customers_suspended($periods, $corte_id) : array
     {
+        $IN_PERIODS = $this->transform_array_string_in_sql($periods);
         $query = Flight::gnconn()->prepare("
             SELECT 
-                clientes.*, 
+                clientes.*,
                 mikrotiks.* 
             FROM clientes 
             INNER JOIN clientes_servicios
@@ -567,7 +569,14 @@ class Process extends Messenger
             ON clientes_servicios.colonia = colonias.colonia_id
             INNER JOIN mikrotiks
             ON colonias.mikrotik_control = mikrotiks.mikrotik_id
-            WHERE clientes_servicios.cliente_status = 2
+            WHERE clientes_servicios.cliente_corte = $corte_id
+            AND clientes_servicios.suspender = 1
+            AND clientes_servicios.cliente_status IN(1,2,5)
+            AND NOT EXISTS(
+                SELECT pagos.pago_id FROM pagos 
+                WHERE pagos.cliente_id = clientes_servicios.cliente_id 
+                AND pagos.periodo_id IN $IN_PERIODS
+            )
         ");
         $query->execute();
         $rows = $query->fetchAll();
@@ -637,9 +646,9 @@ class Process extends Messenger
      *
      * @return mixed
      */
-    public function suspension()
+    public function suspension($periods, $corte_id)
     {
-        $customers = $this->get_customers_suspended();
+        $customers = $this->get_customers_suspended($periods, $corte_id);
         foreach ($customers as $customer) {
             $this->disabled_service($customer);
         }
@@ -787,34 +796,6 @@ class Process extends Messenger
             $this->error_message = "Error al suspender en la base de datos";
         }
     }
-
-
-    /**
-     * layoff_in_mikrotik
-     *
-     * @param  mixed $customers
-     * @return mixed
-     */
-    public function layoff_in_mikrotik()
-    {
-        $this->automatical_suspencion = $this->config_status(2);
-
-        if ($this->automatical_suspencion == 0) {
-            $this->morosos = true;
-            return $this->morosos;
-        }
-
-        $is_pending = $this->pending_process('morosos');
-
-        if (!$is_pending) {
-            $this->morosos = true;
-            return $this->morosos;
-        }
-
-        $this->suspension();
-        $this->end_process('morosos');
-    }
-
     
     /**
      * change_priority_failures
