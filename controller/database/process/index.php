@@ -10,10 +10,6 @@ Flight::route("/@usuario_id/process/suspension", function ($usuario_id) {
     require 'controller/database/process/layoff-database.php';
 });
 
-Flight::route("/@usuario_id/process/suspension/mikrotik", function ($usuario_id) {
-    require 'controller/database/process/layoff-mikrotik.php';
-});
-
 Flight::route("/@usuario_id/process/freemonth", function ($usuario_id) {
     require 'controller/database/process/free-month.php';
 });
