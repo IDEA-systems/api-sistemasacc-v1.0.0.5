@@ -517,15 +517,15 @@ class Payment extends Messenger
      */
     public function get_all_payments($filters)
     {
-        $status_pago = $filters['status_pago'];
-        $pago_folio = $filters['pago_folio'];
-        $tipo_pago = $filters['tipo_pago'];
-        $cliente_id = $filters['cliente_id'];
-        $periodo_id = $filters['periodo_id'];
-        $usuario_captura = $filters['usuario_captura'];
-        $fecha_inicio = $filters['date_start'];
-        $fecha_fin = $filters['date_end'];
-        $search = $filters['search'];
+        $status_pago = isset($filters['status_pago']) && strlen($filters["status_pago"]) < 12 ? $filters['status_pago'] : 'IN(1,2,3)';
+        $pago_folio = isset($filters['pago_folio']) ? $filters['pago_folio'] : null;
+        $tipo_pago = isset($filters['tipo_pago']) ? $filters['tipo_pago'] : null;
+        $cliente_id = isset($filters['cliente_id']) ? $filters['cliente_id'] : null;
+        $periodo_id = isset($filters['periodo_id']) ? $filters['periodo_id'] : null;
+        $usuario_captura = isset($filters['usuario_captura']) ? $filters['usuario_captura'] : null;
+        $fecha_inicio = isset($filters['date_start']) ? $filters['date_start'] : null;
+        $fecha_fin = isset($filters['date_end']) ? $filters['date_end'] : null;
+        $search = isset($filters['search']) ? $filters['search'] : null;
         $all = $filters['all'];
 
 
@@ -537,12 +537,8 @@ class Payment extends Messenger
             ON usuarios.usuario_id = empleados.usuario_id 
             INNER JOIN clientes 
             ON pagos.cliente_id = clientes.cliente_id 
-            WHERE YEAR(pagos.pago_fecha_captura) = YEAR(current_date)
+            WHERE pagos.status_pago $status_pago
         ";
-
-        if (!is_null($status_pago)) {
-            $SQL .= " AND pagos.status_pago = $status_pago ";
-        }
 
         if (!is_null($pago_folio)) {
             $SQL .= " AND pagos.pago_folio = $pago_folio ";
@@ -564,8 +560,12 @@ class Payment extends Messenger
             $SQL .= " AND pagos.usuario_captura = '$usuario_captura' ";
         }
 
-        if (!is_null($fecha_inicio) && !is_null($fecha_fin)) {
-            $SQL .= " AND DATE(pagos.pago_fecha_captura) >= '$fecha_inicio' AND DATE(pagos.pago_fecha_captura) <= '$fecha_fin' ";
+        if (!is_null($fecha_inicio)) {
+            $SQL .= " AND DATE(pagos.pago_fecha_captura) >= DATE('$fecha_inicio') ";
+        }
+
+        if (!is_null($fecha_fin)) {
+            $SQL .= " AND DATE(pagos.pago_fecha_captura) <= DATE('$fecha_fin') ";
         }
 
         if (!is_null($search)) {
@@ -573,6 +573,7 @@ class Payment extends Messenger
                 AND CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) LIKE '%$search%'
                 OR CONCAT(empleados.empleado_nombre, ' ', empleados.empleado_apellido) LIKE '%$search%'
                 OR pagos.pago_folio LIKE '%$search%'
+                OR pagos.periodo_id LIKE '%$search%'
             ";
         }
 
