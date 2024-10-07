@@ -1244,12 +1244,21 @@ class Customer extends Messenger
     public function change_status_customer($cliente_status) : void
     {
         try {
+            $ultima_suspension = $cliente_status == 2 
+                ? 'CURRENT_DATE()' 
+                : 'ultima_suspension';
+
             $query = Flight::gnconn()->prepare("
                 UPDATE clientes_servicios
-                SET cliente_status = ?
+                SET cliente_status = ?,
+                ultima_suspension = ?
                 WHERE cliente_id = ?
             ");
-            $query->execute([ $cliente_status, $this->cliente_id ]);
+            $query->execute([ 
+                $cliente_status, 
+                $ultima_suspension,
+                $this->cliente_id
+            ]);
         } catch (Exception $error) {
             $this->error = true;
             $this->error_message = "Error al habilitar el cliente!";
@@ -1260,40 +1269,44 @@ class Customer extends Messenger
      * suspended_lots
      *
      * @param  string $request
-     * @return bool
+     * @return void
      */
     public function suspended_lots($request)
     {
         $order = array('"', '[', ']');
         $replace = array("'", "(", ")");
-        $IN_PERIODS = str_replace($order, $replace, $request);
+        $ids = str_replace($order, $replace, $request);
         
-        try {
-            $SQL = "UPDATE clientes_servicios SET cliente_status = 2 WHERE cliente_id IN $IN_PERIODS";
-            $query = Flight::gnconn()->prepare($SQL);
-            $query->execute();
-            $this->suspended_in_mikrotik_lots($request);
-            return true;
-        } catch(Exception $error) {
-            $this->error = true;
-            $this->error_message = "Ocurrio un error!";
-            return false;
-        }
-    }
+        $this->process_lots_suspended($ids);
 
-    /**
-     * suspended_in_mikrotik_lots
-     *
-     * @param  mixed $request
-     * @return void
-     */
-    public function suspended_in_mikrotik_lots($request)
-    {
+        if ($this->error) return;
+        
         $ids = json_decode($request);
         if (is_array($ids) && !empty($ids)) {
             foreach ($ids as $cliente_id) {
                 $this->disabled_services($cliente_id);
             }
+        }
+    }
+
+    /**
+     * process_lots_suspended
+     *
+     * @param  mixed $request
+     * @return void
+     */
+    public function process_lots_suspended($ids)
+    {
+        try {
+            $query = Flight::gnconn()->prepare("
+                UPDATE clientes_servicios 
+                SET cliente_status = 2 
+                WHERE cliente_id IN $ids
+            ");
+            $query->execute();
+        } catch(Exception $error) {
+            $this->error = true;
+            $this->error_message = "Ocurrio un error!";
         }
     }
 
@@ -1307,9 +1320,47 @@ class Customer extends Messenger
     {
         $order = array('"', '[', ']');
         $replace = array("'", "(", ")");
-        $IN_PERIODS = str_replace($order, $replace, $request);
-        $SQL = "SELECT CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) as nombres, clientes.*, clientes_servicios.*, colonias.nombre_colonia, colonias.mikrotik_control, paquetes.nombre_paquete, paquetes.ancho_banda, status_equipo.nombre_status_equipo, cortes_servicio.dia_pago, clientes_status.status_id, clientes_status.nombre_status, mikrotiks.mikrotik_nombre, antenas.modelo, modem.modelo as modem, servicios.nombre_servicio FROM clientes INNER JOIN clientes_servicios ON clientes.cliente_id = clientes_servicios.cliente_id INNER JOIN servicios ON clientes_servicios.tipo_servicio = servicios.servicio_id INNER JOIN colonias ON colonias.colonia_id = clientes_servicios.colonia INNER JOIN mikrotiks ON colonias.mikrotik_control = mikrotiks.mikrotik_id INNER JOIN clientes_status ON clientes_servicios.cliente_status = clientes_status.status_id INNER JOIN paquetes ON paquetes.idpaquete = clientes_servicios.cliente_paquete CROSS JOIN status_equipo ON clientes_servicios.status_equipo = status_equipo.status_id INNER JOIN cortes_servicio ON cortes_servicio.corte_id = clientes_servicios.cliente_corte CROSS JOIN antenas ON clientes_servicios.antena_instalada = antenas.idantena CROSS JOIN modem ON clientes_servicios.modem_instalado = modem.idmodem WHERE  clientes.cliente_id IN $IN_PERIODS";
-        $query = Flight::gnconn()->prepare($SQL);
+        $ids = str_replace($order, $replace, $request);
+        $query = Flight::gnconn()->prepare("
+            SELECT 
+                CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) as nombres, 
+                clientes.*, 
+                clientes_servicios.*, 
+                colonias.nombre_colonia, 
+                colonias.mikrotik_control, 
+                paquetes.nombre_paquete, 
+                paquetes.ancho_banda, 
+                status_equipo.nombre_status_equipo, 
+                cortes_servicio.dia_pago, 
+                clientes_status.status_id, 
+                clientes_status.nombre_status, 
+                mikrotiks.mikrotik_nombre, 
+                antenas.modelo, 
+                modem.modelo as modem, 
+                servicios.nombre_servicio 
+            FROM clientes 
+            INNER JOIN clientes_servicios 
+            ON clientes.cliente_id = clientes_servicios.cliente_id 
+            INNER JOIN servicios 
+            ON clientes_servicios.tipo_servicio = servicios.servicio_id 
+            INNER JOIN colonias 
+            ON colonias.colonia_id = clientes_servicios.colonia 
+            INNER JOIN mikrotiks 
+            ON colonias.mikrotik_control = mikrotiks.mikrotik_id 
+            INNER JOIN clientes_status 
+            ON clientes_servicios.cliente_status = clientes_status.status_id 
+            INNER JOIN paquetes 
+            ON paquetes.idpaquete = clientes_servicios.cliente_paquete 
+            CROSS JOIN status_equipo 
+            ON clientes_servicios.status_equipo = status_equipo.status_id 
+            INNER JOIN cortes_servicio 
+            ON cortes_servicio.corte_id = clientes_servicios.cliente_corte 
+            CROSS JOIN antenas 
+            ON clientes_servicios.antena_instalada = antenas.idantena 
+            CROSS JOIN modem 
+            ON clientes_servicios.modem_instalado = modem.idmodem 
+            WHERE  clientes.cliente_id IN $ids
+        ");
         $query->execute();
         $rows = $query->fetchAll();
         return $rows;

@@ -701,7 +701,7 @@ class ReadCustomers extends Messenger
     public function clientes()
     {
         $SQL = " 
-            SELECT CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) AS nombres, clientes.*, clientes_servicios.*, tipo_servicios.nombre_servicio, colonias.nombre_colonia, colonias.mikrotik_control, mikrotiks.mikrotik_nombre, paquetes.nombre_paquete, modem.modelo as modem, clientes_status.status_id, clientes_status.nombre_status FROM clientes 
+            SELECT clientes.*, clientes_servicios.*, cortes_servicio.*, CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) AS nombres,  tipo_servicios.nombre_servicio, colonias.nombre_colonia, colonias.mikrotik_control, mikrotiks.mikrotik_nombre, paquetes.nombre_paquete, modem.modelo as modem, clientes_status.status_id, clientes_status.nombre_status FROM clientes 
             INNER JOIN clientes_servicios ON clientes.cliente_id = clientes_servicios.cliente_id 
             LEFT JOIN servicios_adicionales ON clientes.cliente_id = servicios_adicionales.cliente_id
             INNER JOIN tipo_servicios ON clientes_servicios.tipo_servicio = tipo_servicios.servicio_id 

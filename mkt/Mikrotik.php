@@ -871,16 +871,26 @@ class Mikrotik
             $address_list = $this->comm("/ip/firewall/address-list/getall");
             for ($i = 0; $i < count($address_list); $i++) {
                 if ($address_list[$i]["address"] != $address) continue;
-
-                if (
-                    $address_list[$i]["address"] == $address && 
-                    $address_list[$i]["list"] == $list
-                ) {
-                    return $this->comm("/ip/firewall/address-list/remove", [
-                        ".id" => $i
-                    ]);
+                if ($address_list[$i]["address"] == $address && $address_list[$i]["list"] == $list) {
+                    return $this->comm("/ip/firewall/address-list/remove", [".id" => $i]);
                 }
             }
+        }
+    }
+
+
+    public function in_address_list($address, $address_list = "MOROSOS") {
+        if (!$this->connected) return false;
+        if ($this->connected) {
+            $found_address = false;
+            $list = $this->comm("/ip/firewall/address-list/getall");
+            foreach ($list as $item) {
+                if ($item['list'] != $address_list) continue;
+                if ($item["address"] == $address && $item["list"] == $address_list) {
+                    $found_address = true;
+                }
+            }
+            return $found_address;
         }
     }
 

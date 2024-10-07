@@ -123,27 +123,24 @@ Flight::route('POST /@usuario_id/customers/layoff/lots', function ($usuario_id) 
     if ($is_user) {
         $request = Flight::request()->getBody();
         $customer = new Customer();
-        $suspencion = $customer->suspended_lots($request);
-        if ($suspencion) {
-            Flight::json(
-                array(
-                    "status" => 200,
+        $customer->suspended_lots($request);
+        
+        if ($customer->error) {
+            Flight::json([
+                "status" => 500,
+                "title" => "Ocurrió un error!",
+                "details" => "Los clientes no fueron suspendidos!"
+            ]);
+        }
+
+        if (!$customer->error) {
+            $data = $customer->select_customers_lots($request);
+            Flight::json([
+                "status" => 200,
                     "title" => "Proceso terminado!",
                     "details" => "Los clientes fueron suspendidos correctamente!",
-                    "customer" => $customer->select_customers_lots($request),
-                    "data" => $request,
-                )
-            );
-        }
-        if (!$suspencion) {
-            Flight::json(
-                array(
-                    "status" => 500,
-                    "title" => "Ocurrió un error!",
-                    "details" => "Los clientes no fueron suspendidos!",
-                    "data" => $request
-                )
-            );
+                    "customer" => $data
+            ]);
         }
     }
 });

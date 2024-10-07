@@ -14,15 +14,30 @@ class Retry extends Messenger
         $messages = $this->get_message_pending();
         if (empty($messages)) return;
         for ($i = 0; $i < count($messages); $i++) {
+            $json_body = [];
             $cliente_id = $messages[$i]['cliente_id'];
             $type_message = $messages[$i]['type_message'];
             $id = $messages[$i]['message_id'];
             $phone = $messages[$i]['phone'];
             $msj = $messages[$i]["message"];
-            $data = array("phone" => $phone, "message" => $msj);
-            $response = $this->whatsapp($data, $cliente_id, $type_message);
-            if ($response != "ok") return;
-            if ($response == "ok") {
+            
+            if ($messages[$i]["file_url"] != "" && $messages[$i]["file_url"] != null) {
+                $json_body = array(
+                    "mediaUrl" => $messages[$i]["file_url"],
+                    "phone" => $phone, 
+                );
+            } else {
+                $json_body = array(
+                    "phone" => $phone, 
+                    "message" => $msj
+                );
+            }
+
+            // Enviar mensaje de whatsapp
+            $response = $this->whatsapp($json_body, $cliente_id, $type_message);
+
+            if (!$response) return;
+            if ($response) {
                 $this->delete_message($id);
             }
         }

@@ -15,7 +15,7 @@ Flight::route("/@usuario_id/process/freemonth", function ($usuario_id) {
 });
 
 Flight::route("/@usuario_id/process/negociation", function ($usuario_id) {
-    require 'controller/database/process/finish-negociation.php';
+    require 'controller/database/process/process-negociation.php';
 });
 
 Flight::route("/@usuario_id/process/failures", function ($usuario_id) {
@@ -28,4 +28,8 @@ Flight::route("/@usuario_id/process/backup", function ($usuario_id) {
 
 Flight::route("/@usuario_id/process/messenger", function ($usuario_id) {
     require 'controller/database/process/messenger.php';
+});
+
+Flight::route("/@usuario_id/process/morosos", function ($usuario_id) {
+    require 'controller/database/process/add-morosos.php';
 });

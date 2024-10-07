@@ -892,6 +892,7 @@ class Payment extends Messenger
                 SET status_negociacion = 3 
                 WHERE cliente_id = ? 
                 AND status_negociacion = 1
+                AND fecha_fin = CURRENT_DATE()
             ");
             $query->execute([ $this->cliente_id ]);
         } catch (Exception $error) {
@@ -1110,13 +1111,16 @@ class Payment extends Messenger
     public function change_customer_status($new_status)
     {
         try {
+            $is_suspended = $new_status == 2 ? "CURRENT_TIMESTAMP()" : "ultima_suspension";
             $query = Flight::gnconn()->prepare("
                 UPDATE clientes_servicios 
-                SET cliente_status = ? 
+                SET cliente_status = ?,
+                ultima_suspension = ?
                 WHERE cliente_id = ?
             ");
             $query->execute([
                 $new_status,
+                $is_suspended,
                 $this->cliente_id
             ]);
         } catch(Exception $error) {
