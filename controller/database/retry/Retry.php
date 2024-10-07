@@ -36,8 +36,8 @@ class Retry extends Messenger
             // Enviar mensaje de whatsapp
             $response = $this->whatsapp($json_body, $cliente_id, $type_message);
 
-            if ($response != "ok") return;
-            if ($response == "ok") {
+            if (!$response) return;
+            if ($response) {
                 $this->delete_message($id);
             }
         }
