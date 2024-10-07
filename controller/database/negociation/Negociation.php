@@ -14,15 +14,20 @@ class Negociation extends Messenger
     public $error;
     public $error_message;
     public $activacion;
+    public $numero_negociacion;
+    public $cliente_status;
 
     public function __construct($request = [])
     {
-        $this->fecha_inicio = date('Y-m-d');
-        $this->fecha_fin = isset($request->fecha_fin) ? $request->fecha_fin : null;
-        $this->cliente_id = isset($request->cliente_id) ? $request->cliente_id : null;
-        $this->comentario = isset($request->comentario) ? $request->comentario : '';
+        $this->fecha_inicio = isset($request->fecha_inicio) ? $request->fecha_inicio : date('Y-m-d');
+        $this->fecha_captura = isset($request->fecha_captura) ? $request->fecha_captura : date('Y-m-d:h:m:s');
         $this->status_negociacion = isset($request->status_negociacion) ? $request->status_negociacion : 1;
+        $this->numero_negociacion = isset($request->numero_negociacion) ? $request->numero_negociacion : 1;
+        $this->id_negociacion = isset($request->id_negociacion) ? $request->id_negociacion : null;
         $this->usuario_negociacion = isset($request->usuario_id) ? $request->usuario_id : '';
+        $this->cliente_id = isset($request->cliente_id) ? $request->cliente_id : null;
+        $this->comentario = isset($request->comentario) ? $request->comentario : null;
+        $this->fecha_fin = isset($request->fecha_fin) ? $request->fecha_fin : null;
     }
 
     public function __get($propiedad)
@@ -50,11 +55,16 @@ class Negociation extends Messenger
 
     public function get_negociation_to_month()
     {
-        $SQL = "SELECT * FROM negociaciones WHERE cliente_id = '$this->cliente_id' AND MONTH(fecha_inicio) = MONTH(CURRENT_DATE()) AND YEAR(CURRENT_DATE()) = YEAR(fecha_inicio)";
-        $query = Flight::gnconn()->prepare($SQL);
-        $query->execute();
+        $query = Flight::gnconn()->prepare("
+            SELECT * FROM negociaciones 
+            WHERE cliente_id = ? 
+            AND YEAR(CURRENT_DATE()) = YEAR(fecha_captura)
+            AND MONTH(fecha_captura) = MONTH(CURRENT_DATE()) 
+            ORDER BY fecha_fin ASC
+        ");
+        $query->execute([ $this->cliente_id ]);
         $rows = $query->fetchAll();
-        return !empty($rows);
+        return $rows;
     }
 
 
@@ -123,13 +133,19 @@ class Negociation extends Messenger
     }
 
 
-    public function days_corrects()
+    public function date_diff()
     {
-        $SQL = "SELECT DATEDIFF(DATE('$this->fecha_fin'), DATE(CURRENT_DATE())) AS dias";
-        $query = Flight::gnconn()->prepare($SQL);
-        $query->execute();
+        $query = Flight::gnconn()->prepare("
+            SELECT 
+            DATEDIFF(DATE(?), DATE(?)) 
+            AS dias
+        ");
+        $query->execute([ 
+            $this->fecha_fin,
+            $this->fecha_inicio, 
+        ]);
         $rows = $query->fetchAll();
-        return $rows[0]["dias"];
+        return $rows;
     }
 
 
@@ -174,72 +190,486 @@ class Negociation extends Messenger
         }
     }
 
-
-    public function add_negociation_as_root()
+    /**
+     * Summary of negociation_in_customer_active
+     * 
+     * Establece una negociacion a los clientes activos 
+     * Y calcula el status el numero de negociacion la diferencia de dias entre las fechas
+     * Asi como tambien valida si ya existen negociaciones pendientes o corriendo para evitar
+     * agregar negociaciones duplicadas o con errores de fechas
+     * 
+     * @param mixed $customer
+     * @return mixed
+     */
+    public function negociation_in_customer_active($customer)
     {
-        if ($this->days_corrects() > 90) {
+        $datediff = $this->date_diff();
+
+        /**
+         * 
+         * La fecha de inicio y de fin de la negociacion 
+         * no puede ser mas de 31 dias y no puede ser menor a 8 dias
+         * 
+        **/
+        if ($datediff[0]["dias"] > 31 || $datediff[0]["dias"] < 8) {
             $this->error = true;
-            $this->error_message = "Se exedieron los dias!";
+            $this->error_message = "No se adminten negociaciones mayores a 31 dias y tampoco menores a 8 dias!";
             return false;
         }
 
-        // Finalizar negociaciones actuales
-        $this->end_negociations($this->cliente_id);
+        $mensuales = $this->get_negociation_to_month();
 
-        // Agregar nueva negociacion
-        $this->insert_new_negociation();
-        if ($this->error) return false;
+        /**
+         * 
+         * Si el cliente ya tiene mas de 3 negociaciones 
+         * No aplica para la negociacion
+         * 
+        **/
+        if (count($mensuales) > 3) {
+            $this->error = true;
+            $this->error_message = "El cliente ya tiene una negociacion finalizada!";
+            return false;
+        }
 
-        // Cambiar el status del cliente
-        $this->change_status();
-        if ($this->error) return false;
+        /**
+         * 
+         * Si el cliente ya tiene mas de 3 negociaciones 
+         * O las negociaciones suman mas de 3 modificaciones
+         * No aplica para la negociacion
+         * 
+        **/
+        if (count($mensuales) > 0) {
+            $count_negociations = 0;
+            foreach ($mensuales as $negociacion) {
+                $count_negociations += $negociacion["numero_negociacion"];
+            }
 
-        // Datos del mikrotik
-        $rows = $this->get_mikrotik_credentials();
-        $this->activate_service($rows);
-        $this->send_negociation_whatsapp();
-        return true;
+            if ($count_negociations >= 3) {
+                $this->error = true;
+                $this->error_message = "El cliente ya no es apto para otra negociacion!";
+                return false;
+            }
+        }
+
+        $pendientes = $this->get_pending_or_runing();
+
+        /**
+         * 
+         * Si existen negociaciones pendientes o corriendo 
+         * y las numero_negociacion son mayores a 4 entonces no se puede 
+         * extender mas la negociacion y se envia el mensaje de error
+         * 
+        **/
+        if (count($pendientes) >= 1) {
+
+            // Ultima negociacion
+            $key = count($pendientes) - 1;
+
+            // ¿Se puede agregar una negociacion mas?
+            $is_changeable = $pendientes[$key]["numero_negociacion"] <= 2;
+
+            /**
+             * 
+             * La negociacion no puede extenderse mas de 3 veces
+             * ya que las numero_negociacion de la negociacion 
+             * corresponden a otra negociacion
+             * 
+            */
+            if (!$is_changeable) {
+                $this->error = true;
+                $this->error_message = "No se puede agregar mas negociaciones!";
+                return false;
+            }
+
+            
+            $nueva_fecha_fin = new DateTime($this->fecha_fin);
+            $anterior_fecha_fin = new DateTime($pendientes[$key]["fecha_fin"]);
+            $this->fecha_inicio = $pendientes[$key]["fecha_inicio"];
+
+            /**
+             * 
+             * Las fecha_fin de la negociacion no puede cruzarse 
+             * con la fecha fin de la negociacion que esta pendiente o corriendo
+             * 
+            **/
+            if ($nueva_fecha_fin < $anterior_fecha_fin) {
+                $this->error = true;
+                $this->error_message = "Ya existe una negociacion pendiente que termina despues de la fecha que intenta agregar!";
+                return false;
+            }
+
+            // Esta en la misma fecha de inicio
+            $is_date_iguality = $this->fecha_inicio == $pendientes[$key]["fecha_inicio"];
+            $is_pending = $pendientes[$key]["status_negociacion"] == 2;
+            $is_running = $pendientes[$key]["status_negociacion"] == 1;
+
+            /**
+             * 
+             * Si los datos son los mismos y la negociacion aun no comienza
+             * entonces dejarlo como esta sin contar las modificaciones
+             * 
+            */
+            if ($nueva_fecha_fin == $anterior_fecha_fin && $is_date_iguality && $is_pending) {
+                $this->activacion = true;
+                $this->whatsapp = true;
+                return true;
+            }
+
+            if ($nueva_fecha_fin == $anterior_fecha_fin && $is_date_iguality && $is_running) {
+                $this->activacion = true;
+                $this->whatsapp = true;
+                return true;
+            }
+
+            $this->cliente_status = $pendientes[$key]["status_negociacion"] == 2 ? $customer[0]["cliente_status"] : 4;
+            $this->numero_negociacion = $pendientes[$key]["numero_negociacion"] + 1;
+            $this->status_negociacion = $pendientes[$key]["status_negociacion"];
+            $this->id_negociacion = $pendientes[$key]["id_negociacion"];
+
+            /**
+             * 
+             * Actualiza la negociacion 
+             * con los datos de la negociacion actual
+             * 
+            **/
+            $this->trevel_negociation();
+            if ($this->error) return false;
+
+            /**
+             * 
+             * Enviar el mensaje de la negociacion
+             * Nuevamente con los datos actualizados
+            **/
+            $this->send_negociation_whatsapp();
+
+            /**
+             * Activa el servicio en el mikrotik
+             * de nuestro cliente en cuestion
+            **/
+            $mikrotik = $this->get_mikrotik_credentials();
+            $this->activate_service($mikrotik);
+        }
+
+        if (count($pendientes) == 0) {
+            $current_day = date('d');
+            $cliente_corte = $customer[0]["cliente_corte"];
+
+            /**
+             * 
+             * Si el dia actual es mayor o igual al dia de corte del cliente
+             * se cambia el status del cliente a 4 (negociacion)
+             * de lo contrario se mantiene el status del cliente
+             * 
+            **/
+            if ($current_day >= $cliente_corte) {
+                $this->cliente_status = 4;
+                $this->status_negociacion = 1;
+            } 
+
+            if ($current_day < $cliente_corte) {
+                $this->cliente_status = $customer[0]["cliente_status"];
+                $this->status_negociacion = 2;
+            }
+
+            /**
+             * 
+             * Insertar la nueva negociacion
+             * 
+            **/
+            $this->insert_new_negociation();
+            if ($this->error) return false;
+
+            /**
+             * Enviar el mensaje de la negociacion
+            **/
+            $this->send_negociation_whatsapp();
+
+            /**
+             * 
+             * Activar el servicio de nuestro cliente
+             * en el mikrotik routerboard
+             * 
+            **/
+            $mikrotik = $this->get_mikrotik_credentials();
+            $this->activate_service($mikrotik);
+        }
     }
 
 
-    public function end_negociations($cliente_id)
+    public function negociation_in_customer_suspended($customer)
     {
-        $SQL = "UPDATE negociaciones SET status_negociacion = 3 WHERE cliente_id = '$cliente_id'";
-        $query = Flight::gnconn()->prepare($SQL);
-        $query->execute();
+        $datediff = $this->date_diff();
+
+        /**
+         * 
+         * La fecha de inicio y de fin de la negociacion 
+         * no puede ser mas de 31 dias y no puede ser menor a 8 dias
+         * 
+        **/
+        if ($datediff[0]["dias"] > 31 || $datediff[0]["dias"] < 8) {
+            $this->error = true;
+            $this->error_message = "No se adminten negociaciones mayores a 31 dias y tampoco menores a 8 dias!";
+            return false;
+        }
+
+        $negociations = $this->get_negociation_to_month();
+
+        /**
+         * 
+         * Si el cliente ya tiene mas de 3 negociaciones 
+         * no se puede agregar una nueva negociacion
+         * 
+        **/
+        if (count($negociations) > 3) {
+            $this->error = true;
+            $this->error_message = "El cliente ya no es apto para otra negociacion!";
+            return false;
+        }
+
+        $count_negociations = 0;
+
+        /**
+         * 
+         * Si solo tiene 1,2 negociaciones las cuales al sumar sus numero_negociacion 
+         * no puede ser mayor a 3, entonces se puede agregar una nueva negociacion
+         * 
+        **/
+        if (count($negociations) <= 3) {
+            foreach ($negociations as $negociation) {
+                $count_negociations += $negociation["numero_negociacion"];
+            }
+        }
+
+        /**
+         * 
+         * Revisamos si las sumas de las negociaciones establecidas en el mes
+         * No superan el numero 3 ya que es el numero maximo de negociaciones o de modificaciones 
+         * Que puede tener un cliente en un mes, hablando de negociaciones
+         * 
+        **/
+        if ($count_negociations >= 3) {
+            $this->error = true;
+            $this->error_message = "El cliente ya no es apto para otra negociacion!";
+            return false;
+        }
+
+        $this->numero_negociacion = $count_negociations + 1;
+        $this->fecha_inicio = date('Y-m-d');
+        $this->cliente_status = 4;
+
+        /**
+         * 
+         * Insertar la nueva negociacion
+         * 
+        **/
+        $this->insert_new_negociation();
+        if ($this->error) return false;
+
+        /**
+         * 
+         * Enviar el mensaje de la negociacion
+         * 
+        **/
+        $this->send_negociation_whatsapp();
+
+        /**
+         * 
+         * Activar el servicio de nuestro cliente
+         * en el mikrotik routerboard
+         * 
+        **/
+        $mikrotik = $this->get_mikrotik_credentials();
+        $this->activate_service($mikrotik);
+    }
+
+
+    public function add_negociation_as_root()
+    {
+        $customer = $this->get_customer_by_id();
+
+        /**
+         * Realizar las operaciones 
+         * segun el status del cliente
+        **/
+        if (isset($customer[0]["cliente_status"])) {
+            switch ($customer[0]["cliente_status"]) {
+                case 1:
+                    $this->negociation_in_customer_active($customer);
+                break;
+                case 2:
+                    $this->negociation_in_customer_suspended($customer);
+                break;
+                case 3:
+                    $this->error = true;
+                    $this->error_message = "El cliente debe estar activo para agregar una negociacion!";
+                break;
+                case 4:
+                    $this->negociation_in_customer_active($customer);
+                break;
+                case 5:
+                    $this->negociation_in_customer_active($customer);
+                break;
+                case 6:
+                    $this->negociation_in_customer_active($customer);
+                break;
+                default:
+                    $this->error = true;
+                    $this->error_message = "El cliente debe estar activo para agregar una negociacion!";
+            }
+        }
+
     }
 
 
     public function add_negociation_as_user_normal()
     {
-        if ($this->days_corrects() > 30) {
+        /**
+         * Obtener las negociaciones mensuales
+        **/
+        $customer = $this->get_customer_by_id();
+
+        // Status no permitidos
+        $is_disabled = in_array($customer[0]["cliente_status"], [3,4]);
+
+        // Solo se puede agregar a clientes autorizados
+        if ($is_disabled) {
             $this->error = true;
-            $this->error_message = "Se exedieron los dias!";
+            $this->error_message = "No puede agregar la negociacion!";
             return false;
         }
 
-        if ($this->get_client_negociation()) {
+        $mensuales = $this->get_negociation_to_month();
+
+        /**
+         * 
+         * Si el cliente ya tiene mas de 3 negociaciones 
+         * No aplica para la negociacion
+         * 
+        **/
+        if (count($mensuales) > 3) {
             $this->error = true;
-            $this->error_message = "Negociación existente!";
+            $this->error_message = "El cliente ya tiene una negociacion finalizada!";
             return false;
         }
 
-        if ($this->get_negociation_to_month()) {
+        /**
+         * 
+         * Si el cliente ya tiene mas de 3 negociaciones 
+         * O las negociaciones suman mas de 3 modificaciones
+         * No aplica para la negociacion
+         * 
+        **/
+        if (count($mensuales) > 0) {
+            $count_negociations = 0;
+            foreach ($mensuales as $negociacion) {
+                $count_negociations += $negociacion["numero_negociacion"];
+            }
+
+            if ($count_negociations >= 3) {
+                $this->error = true;
+                $this->error_message = "El cliente ya no es apto para otra negociacion!";
+                return false;
+            }
+        }
+
+        $datediff = $this->date_diff();
+
+        /**
+         * 
+         * Los dias de diferencia entre las fechas 
+         * no deben ser manores a 8 o mayores a 31 dias
+         * 
+        **/
+        if ($datediff[0]['dias'] > 31 || $datediff[0]["dias"] < 8) {
             $this->error = true;
-            $this->error_message = "Negociacion mensual gastada!";
+            $this->error_message = "La fecha de finalizacion no puede ser menor a la fecha de inicio!";
             return false;
         }
 
-        $this->insert_new_negociation();
-        if ($this->error) return false;
+        /**
+         * 
+         * Si existen negociaciones pendientes o corriendo
+         * El usuario normal no puede agregar una nueva negociacion
+         * 
+        **/
+        $pendientes = $this->get_pending_or_runing();
 
-        $this->change_status();
-        if ($this->error) return false;
+        if (count($pendientes) > 0) {
+            $this->error = true;
+            $this->error_message = "El cliente ya tiene una negociacion pendiente o corriendo!";
+            return false;
+        }
 
-        $rows = $this->get_mikrotik_credentials();
-        $this->activate_service($rows);
-        $this->send_negociation_whatsapp();
-        return true;
+        switch($customer[0]["cliente_status"]) {
+            case 1:
+                $this->negociation_in_customer_active($customer);
+            break;
+            case 2:
+                $this->negociation_in_customer_suspended($customer);
+            break;
+            case 3:
+                $this->error = true;
+                $this->error_message = "El cliente debe estar activo para agregar una negociacion!";
+            break;
+            case 4:
+                $this->negociation_in_customer_active($customer);
+            break;
+            case 5:
+                $this->negociation_in_customer_active($customer);
+            break;
+            case 6:
+                $this->negociation_in_customer_active($customer);
+            break;
+            default:
+                $this->error = true;
+                $this->error_message = "El cliente debe estar activo para agregar una negociacion!";
+        }
+    }
+
+
+
+    public function get_pending_or_runing()
+    {
+        $query = Flight::gnconn()->prepare("
+            SELECT * FROM negociaciones 
+            WHERE cliente_id = ? 
+            AND status_negociacion IN(1,2)
+            ORDER BY fecha_captura ASC
+        ");
+        $query->execute([ $this->cliente_id ]);
+        $rows = $query->fetchAll();
+        return $rows;
+    }
+
+    
+    /**
+     * 
+     * Finaliza las negociaciones activas para un cliente específico
+     *
+     * Esta función actualiza el estado de las negociaciones a finalizado (status_negociacion = 3)
+     * para un cliente dado, cuando la fecha de finalización de la negociación es la fecha actual.
+     *
+     * @param string $cliente_id El ID del cliente cuyas negociaciones se finalizarán
+     *
+     * @return void
+     *
+     * @throws Exception Si ocurre un error durante la ejecución de la consulta SQL
+     * 
+    **/
+    public function end_negociations($cliente_id)
+    {
+        try {
+            $query = Flight::gnconn()->prepare("
+                UPDATE negociaciones 
+                SET status_negociacion = 3,
+                fecha_fin = CURRENT_DATE()
+                WHERE cliente_id = ?
+            ");
+            $query->execute([ $cliente_id ]);
+        } catch (Exception $error) {
+            $this->error = true;
+            $this->error_message = "Error al intentar agregar la negociacion!";//$error->getMessage();
+        }
     }
 
 
@@ -278,6 +708,32 @@ class Negociation extends Messenger
         return $rows;
     }
 
+
+    public function trevel_negociation()
+    {
+        $query = Flight::gnconn()->prepare("
+            UPDATE negociaciones 
+            JOIN clientes_servicios 
+            ON negociaciones.cliente_id = clientes_servicios.cliente_id
+            SET negociaciones.status_negociacion = ?,
+            negociaciones.fecha_fin = ?,
+            negociaciones.numero_negociacion = ?,
+            negociaciones.comentarios = CONCAT(negociaciones.comentarios, '\nComentario $this->numero_negociacion: ', ?),
+            clientes_servicios.cliente_status = ?
+            WHERE negociaciones.cliente_id = ?
+            AND negociaciones.id_negociacion = ?
+        ");
+        $query->execute([
+            $this->status_negociacion,
+            $this->fecha_fin,
+            $this->numero_negociacion,
+            $this->comentario,
+            $this->cliente_status,
+            $this->cliente_id,
+            $this->id_negociacion
+        ]);
+    }
+
     
     /**
      * insert_new_negociation
@@ -287,28 +743,37 @@ class Negociation extends Messenger
     public function insert_new_negociation() : void
     {
         try {
-            $SQL = "INSERT INTO `negociaciones` VALUES (NULL, ?, ?, ?, ?, ?, ?)";
-            $query = Flight::gnconn()->prepare($SQL);
-            $query->execute([
-                $this->cliente_id,
-                $this->fecha_inicio,
-                $this->fecha_fin,
-                $this->comentario,
-                $this->status_negociacion,
-                $this->usuario_negociacion
+            $query = Flight::gnconn()->prepare("
+                START TRANSACTION;
+                    INSERT INTO negociaciones VALUES (NULL, ?, ?, ?, ?, ?, 'Comentario $this->numero_negociacion: $this->comentario', ?, ?);
+                    UPDATE clientes_servicios SET cliente_status = ? WHERE cliente_id = ?;
+                COMMIT;
+            ");
+            $query->execute([ 
+                $this->cliente_id, 
+                $this->fecha_inicio, 
+                $this->fecha_fin, 
+                $this->fecha_captura, 
+                $this->numero_negociacion,
+                $this->status_negociacion, 
+                $this->usuario_negociacion, 
+                $this->cliente_status, 
+                $this->cliente_id 
             ]);
-            $this->id_negociacion = $this->get_new_id();
-        } catch (Exception $error) {
+            $this->set_id_negociation();
+        } 
+        catch (Exception $error) {
             $this->error = true;
-            $this->error_message = $error->getMessage();//"No se pudo completar la negociación!";
+            $this->error_message = "Ocurrio un error al agregar la negociacion, la conexión a la base de datos falló!";
+            //$error->getMessage();//"No se pudo completar la negociación!";
         }
     }
 
 
-    public function get_new_id()
+    public function set_id_negociation()
     {
-        $new_id = Flight::gnconn()->lastInsertId();
-        return $new_id;
+        $this->id_negociacion = Flight::gnconn()->lastInsertId();
+        return $this->id_negociacion;
     }
     
     /**
@@ -343,49 +808,64 @@ class Negociation extends Messenger
      */
     public function activate_service($rows)
     {
-        $mktIP = isset($rows[0]["mikrotik_ip"]) ? $rows[0]["mikrotik_ip"] : '';
+        $ip = isset($rows[0]["mikrotik_ip"]) ? $rows[0]["mikrotik_ip"] : '';
         $user = isset($rows[0]["mikrotik_usuario"]) ? $rows[0]["mikrotik_usuario"] : '';
         $pass = isset($rows[0]["mikrotik_password"]) ? $rows[0]["mikrotik_password"] : '';
         $port = isset($rows[0]["mikrotik_puerto"]) ? $rows[0]["mikrotik_puerto"] : '';
-        $metodo_bloqueo = isset($rows[0]["metodo_bloqueo"]) ? $rows[0]["metodo_bloqueo"] : false;
+        $metodo = isset($rows[0]["metodo_bloqueo"]) ? $rows[0]["metodo_bloqueo"] : false;
 
-        $conn = new Mikrotik($mktIP, $user, $pass, $port);
+        /**
+         * 
+         * Establecer la conexión con el mikrotik
+        */
+        $conn = new Mikrotik($ip, $user, $pass, $port);
+
+        /**
+         * 
+         * Si no se puede conectar al mikrotik, 
+         * se inserta en la tabla mikrotik_retry_remove
+         * para posteriormente ser procesado por el servicio de mikrotik
+         * pero el proceso no puede continuar
+         * 
+        **/
         if (!$conn->connected) {
             $this->mikrotik_remove_fail($rows);
             $this->activacion = false;
-            $conn->disconnect();
-            return;
         }
 
-        if ($metodo_bloqueo) {
-            switch ($metodo_bloqueo) {
-                case "DHCP":
-                    $conn->remove_from_address_list(
-                        $rows[0]['cliente_ip'],
-                        "MOROSOS"
-                    );
-                    $this->activacion = true;
-                    $conn->disconnect();
-                break;
-
-                case "ARP":
-                    $conn->remove_from_address_list(
-                        $rows[0]['cliente_ip'],
-                        "MOROSOS"
-                    );
-                    $this->activacion = true;
-                    $conn->disconnect();
-                break;
-
-                case "PPPOE":
-                    $conn->enable_secret(
-                        $rows[0]['user_pppoe'],
-                        $rows[0]['profile']
-                    );
-                    $this->activacion = true;
-                    $conn->disconnect();
-                break;
-                default: // Hacer nada
+        /**
+         * 
+         * Si se puede conectar al mikrotik, se procede a 
+         * activar el servicio del cliente
+         * 
+         */
+        if ($conn->connected) {
+            if ($metodo) {
+                switch ($metodo) {
+                    case "DHCP":
+                        $conn->remove_from_address_list($rows[0]['cliente_ip'], "MOROSOS");
+                        $is_exists = $conn->in_address_list($rows[0]['cliente_ip'], "MOROSOS");
+                        $this->activacion = $is_exists ? false : true;
+                        $conn->disconnect();
+                    break;
+    
+                    case "ARP":
+                        $conn->remove_from_address_list($rows[0]['cliente_ip'], "MOROSOS");
+                        $is_exists = $conn->in_address_list($rows[0]['cliente_ip'], "MOROSOS");
+                        $this->activacion = $is_exists ? false : true;
+                        $conn->disconnect();
+                    break;
+    
+                    case "PPPOE":
+                        $conn->enable_secret(
+                            $rows[0]['user_pppoe'],
+                            $rows[0]['profile']
+                        );
+                        $this->activacion = true;
+                        $conn->disconnect();
+                    break;
+                    default: // Hacer nada
+                }
             }
         }
     }
@@ -401,21 +881,23 @@ class Negociation extends Messenger
     {
         $validate_exists = $this->this_record_already_exists(
             'mikrotik_retry_remove', 
-            $mikrotik_data[0]['cliente_id'], 
+            $this->cliente_id, 
             'morosos'
         );
 
-        !$validate_exists && $this->insert_into_mikrotik_retry_remove(
-            $mikrotik_data[0]['cliente_id'], 
-            $mikrotik_data[0]['mikrotik_id'], 
-            $mikrotik_data[0]['cliente_ip'], 
-            $mikrotik_data[0]['cliente_mac'], 
-            $mikrotik_data[0]['server'], 
-            $mikrotik_data[0]['interface_arp'], 
-            $mikrotik_data[0]['profile'], 
-            "MOROSOS", 
-            "morosos"
-        );
+        if (empty($validate_exists)) {
+            $this->insert_into_mikrotik_retry_remove(
+                $mikrotik_data[0]['cliente_id'], 
+                $mikrotik_data[0]['mikrotik_id'], 
+                $mikrotik_data[0]['cliente_ip'], 
+                $mikrotik_data[0]['cliente_mac'], 
+                $mikrotik_data[0]['server'], 
+                $mikrotik_data[0]['interface_arp'], 
+                $mikrotik_data[0]['profile'], 
+                "MOROSOS", 
+                "morosos"
+            );
+        }
     }
 
     
@@ -429,13 +911,17 @@ class Negociation extends Messenger
      */
     public function this_record_already_exists($TABLE, $cliente_id, $module)
     {
-        $SQL = "SELECT * FROM $TABLE WHERE cliente_id = '$cliente_id' AND module = '$module'";
-        $query = Flight::gnconn()->prepare($SQL);
-        $query->execute();
+        $query = Flight::gnconn()->prepare("
+            SELECT * FROM $TABLE 
+            WHERE cliente_id = ? 
+            AND module = ?
+        ");
+        $query->execute([ 
+            $this->cliente_id, 
+            $this->module 
+        ]);
         $rows = $query->fetchAll();
-        $exists = empty($rows);
-        if ($exists) return false;
-        return true;
+        return $rows;
     }
     
     /**
@@ -458,10 +944,10 @@ class Negociation extends Messenger
             $mikrotik_id,
             $cliente_ip,
             $cliente_mac,
+            $address_list,
             $server,
             $interface_arp,
             $profile,
-            $address_list,
             $module
         ]);
     }
@@ -475,8 +961,8 @@ class Negociation extends Messenger
     public function get_customer_by_id()
     {
         $SQL = "
-            SELECT CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) AS nombres, clientes.*, clientes_servicios.*, tipo_servicios.nombre_servicio, colonias.nombre_colonia, colonias.mikrotik_control, mikrotiks.mikrotik_nombre, paquetes.nombre_paquete, modem.modelo as modem, clientes_status.status_id, clientes_status.nombre_status FROM clientes 
-            INNER JOIN clientes_servicios ON clientes.cliente_id = clientes_servicios.cliente_id 
+            SELECT CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) AS nombres, clientes.*, clientes_servicios.*, cortes_servicio.*, tipo_servicios.nombre_servicio, colonias.nombre_colonia, colonias.mikrotik_control, mikrotiks.mikrotik_nombre, paquetes.nombre_paquete, modem.modelo as modem, clientes_status.status_id, clientes_status.nombre_status FROM clientes 
+            INNER JOIN clientes_servicios ON clientes.cliente_id = clientes_servicios.cliente_id
             LEFT JOIN servicios_adicionales ON clientes.cliente_id = servicios_adicionales.cliente_id
             INNER JOIN tipo_servicios ON clientes_servicios.tipo_servicio = tipo_servicios.servicio_id 
             INNER JOIN colonias ON colonias.colonia_id = clientes_servicios.colonia 

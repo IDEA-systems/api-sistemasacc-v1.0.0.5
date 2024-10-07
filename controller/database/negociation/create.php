@@ -16,7 +16,7 @@ if ($is_user) {
     if ($negociation->error) {
         Flight::json([
             "status" => 500,
-            "title" => "Error!",
+            "title" => "Error interno!",
             "details" => $negociation->error_message
         ]);
     }
