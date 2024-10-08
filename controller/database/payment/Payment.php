@@ -211,35 +211,65 @@ class Payment extends Messenger
     /**
      * save_payment
      *
-     * @return boolean
+     * @return void
      **/
     public function save_payment()
     {
-        if ($this->repeat_folio($this->pago_folio)) {
+        /**
+         * Buscar el folio ingresado 
+        **/
+        $payments = $this->folio != '' ? $this->repeat_folio() : [];
+
+        if (count($payments) > 0) {
             $this->error_message = "El folio: $this->pago_folio ya existe!";
-            return false;
+            return;
         }
 
-        if ($this->repeat_period($this->periodo_id, $this->cliente_id)) {
+        /**
+         * Buscar los periodos ingresados
+         */
+        $periods = $this->customer_periods();
+
+        if (count(value: $periods) > 0) {
             $this->error_message = "El periodo ya esta pagado!";
-            return false;
+            return;
         }
 
-        $this->save_in_payments();
-        if ($this->error) return false;
-
-        $this->save_movement_boxes();
-        if ($this->error) return false;
-
-        $this->add_to_boxes();
-        if ($this->error) return false;
-
+        /**
+         * Activar el servicio del cliente dependiendo el status
+         * Que devuelva el proceso de los periodos
+         */
         $this->customer_activation();
-        if ($this->error) return false;
+        if ($this->error) return;
 
+        /**
+         * Guardar los pagos del cliente 
+         * si la activacion se realiza con exito
+         */
+        $this->save_in_payments();
+        if ($this->error) return;
+
+        /**
+         * Guardar el pago en los movimientos de la caja
+         * Solo si el root lo agrego
+         */
+        $this->save_movement_boxes();
+        if ($this->error) return;
+
+        /**
+         * Agregar el saldo de los pagos a la caja 
+         * Segun el tipo de pago
+         */
+        $this->add_to_boxes();
+        if ($this->error) return;
+
+        /**
+         * Enviar el mensaje de pago
+        **/
         $this->send_whatsapp_payment();
-        $this->send_email_payment();
-        return true;
+        // $this->send_email_payment();
+
+        return;
     }
 
 
@@ -379,6 +409,7 @@ class Payment extends Messenger
     public function add_to_boxes()
     {
         if ($this->status_pago != 1) return;
+
         if ($this->status_pago == 1) {
             // TOTALES EN DESCUENTOS Y PAGOS
             $total_discount = $this->pago_descuento * count($this->periodo_id);     // Total en descuento
@@ -411,30 +442,40 @@ class Payment extends Messenger
      * @param  string $pago_folio       Folio del pago que se busca
      * @return bool
      **/
-    public function repeat_folio($folio)
+    public function repeat_folio()
     {
-        $SQL = "SELECT CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) AS fullname FROM pagos INNER JOIN clientes ON pagos.cliente_id = clientes.cliente_id WHERE pagos.pago_folio = '$folio' AND pagos.pago_folio != ''";
-        $query = Flight::gnconn()->prepare($SQL);
-        $query->execute();
-        $rows = $query->fetchAll();
-        return count($rows) > 0;
+        $query = Flight::gnconn()->prepare("
+            SELECT CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) AS fullname FROM pagos 
+            INNER JOIN clientes 
+            ON pagos.cliente_id = clientes.cliente_id 
+            WHERE pagos.pago_folio = ?
+        ");
+        $query->execute([ $this->pago_folio ]);
+        $rows = $query->fetchAll([ $this->pago_folio ]);
+        return $rows;
     }
 
 
     /**
-     * repeat_period      Verificar que no se repitan los periodos
+     * customer_periods      Verificar que no se repitan los periodos
      * 
-     * @return bool
+     * @return array
      **/
-    public function repeat_period($periodos, $cliente_id)
+    public function customer_periods()
     {
-        // generate IN from SQL string //
-        $in = $this->transform_array_string_in_sql($periodos);
-        $SQL = " SELECT pago_id FROM pagos WHERE periodo_id IN $in AND cliente_id = '$cliente_id' AND YEAR(pago_fecha_captura) = YEAR(CURRENT_DATE()) AND status_pago != 0";
-        $query = Flight::gnconn()->prepare($SQL);
-        $query->execute();
+        // generate IN from SQL string
+        $in = $this->transform_array_string_in_sql($this->periodo_id);
+        
+        $query = Flight::gnconn()->prepare("
+            SELECT pago_id FROM pagos 
+            WHERE periodo_id IN $in 
+            AND cliente_id = ? 
+            AND YEAR(pago_fecha_captura) = YEAR(CURRENT_DATE()) 
+            AND status_pago != 0
+        ");
+        $query->execute([ $this->cliente_id ]);
         $rows = $query->fetchAll();
-        return count($rows) > 0;
+        return $rows;
     }
 
 
@@ -669,7 +710,7 @@ class Payment extends Messenger
         if ($this->error) return false;
 
         // Proceso mikrotik
-        $rows = $this->get_mikrotik_credentials($this->cliente_id);
+        $rows = $this->get_customer_join_mikrotik();
 
         // Agregar o eliminar de morosos
         if ($cliente_status != 2 || $rows[0]["suspender"] == 0) {
@@ -718,7 +759,7 @@ class Payment extends Messenger
         $this->change_customer_status($cliente_status);
         if ($this->error) return false;
 
-        $rows = $this->get_mikrotik_credentials($this->cliente_id);
+        $rows = $this->get_customer_join_mikrotik();
 
         if ($cliente_status == 2) {
             $this->layoff_in_mikrotik($rows);
@@ -819,60 +860,443 @@ class Payment extends Messenger
      * customer_activation
      *
      * Activar al cliente que realiza el pago
-     * @return boolean
+     * @return void
      */
     public function customer_activation()
-    {
-        $new_status = $this->status_pago == 2 ? 5 : 1;
-        $customer = $this->get_mikrotik_credentials($this->cliente_id);
+    {        
+        /**
+         * Obtener los datos del cliente junto con los datos del mikrotik
+        **/
+        $customer = $this->get_customer_join_mikrotik();
+
         $cliente_status = $customer[0]["cliente_status"];
+
+        /**
+         * Definir el status del cliente segun el status del pago
+        **/
+        $new_status = $this->status_pago == 2 ? 5 : 1;
+
+        /**
+         * Se debe cambiar el status del cliente?
+        **/
+        $results = $this->is_changeable_status($customer);
+
+        switch($cliente_status) {
+            case 1:
+                if ($results == 'change') {
+                    /**
+                     * Cambiar el status si es necesario
+                    **/
+                    $this->change_customer_status($new_status);
+                }
+                /**
+                 * Habilitar en el mikrotik
+                **/
+                $this->enable_in_mikrotik($customer);
+            break;
+
+            case 2: 
+                /**
+                 * Si el status debe cambiarse
+                **/
+                if ($results == 'change') {
+                    /**
+                     * Cambiar el estatus del cliente
+                     */
+                    $this->change_customer_status($new_status);
+                    /**
+                     * Habilitar en el mikrotik
+                    **/
+                    $this->enable_in_mikrotik($customer);
+                }
+
+                /**
+                 * Si el status se debe mantener en este status
+                 */
+                if ($results == 'keep') {
+                    /**
+                     * Bloquear en el mikrotik 
+                    **/
+                    $this->layoff_in_mikrotik($customer);
+                }
+            break;
+            case 3: 
+                $this->error = true;
+                $this->error_message = "Esta capturando un pago a un cliente inactivo!";
+            case 4: 
+                /**
+                 * Si el status debe cambiarse
+                **/
+                if ($results == 'change') {
+                    /**
+                     * Cambiar el estatus del cliente
+                     */
+                    $this->change_customer_status($new_status);
+                }
+
+                /**
+                 * Habilitar en el mikrotik
+                **/
+                $this->enable_in_mikrotik($customer);
+            break;
+            case 5:
+                /**
+                 * Si el status debe cambiarse
+                **/
+                if ($results == 'change') {
+                    /**
+                     * Cambiar el estatus del cliente
+                     */
+                    $this->change_customer_status($new_status);
+                }
+
+                /**
+                 * Habilitar en el mikrotik
+                **/
+                $this->enable_in_mikrotik($customer);
+            break;
+            case 6: 
+                /**
+                 * Habilitar en el mikrotik
+                **/
+                $this->enable_in_mikrotik($customer);
+            break;
+            default: 
+                // No se hace nada
+            break;
+        }
+
+        
+
+        
+
+        /**
+         * El status debe mantenerse 
+        **/
+        if ($results == 'change' && $cliente_status == 2) {
+
+        }
+
+        /**
+         * Los procesos seran diferentes 
+         * segun el status del cliente
+        **/
+        // switch($cliente_status) {
+        //     case 'change': 
+        //         $this->finally_pending_negociations();
+        //         $this->finally_running_negociations($cliente_status);
+        //         $this->enable_in_mikrotik($customer);
+
+
+        //         if ($todo == 'change') {
+        //             $this->change_customer_status($new_status);
+        //         }
+        //     break;
+        //     case 'keep':
+        //         $this->is_changeable_status($customer);
+        //     break;
+        //     default:
+        //         $this->error = true;
+        //         $this->error_message = "No se especifico el status del cliente!";
+        // }
+
+
         // Buscar pagos solo en periodo actual
-        $current_payment = $this->payment_of_current_periods($this->cliente_id);
-        // Buscar pagos en periodo anterior y periodo actual
-        $current_two_payment = $this->payment_of_current_two_periods($this->cliente_id);
+        // $current_payment = $this->payment_of_current_periods($this->cliente_id);
+        // // Buscar pagos en periodo anterior y periodo actual
+        // $current_two_payment = $this->payment_of_current_two_periods($this->cliente_id);
 
-        if ($cliente_status == 1 || $cliente_status == 6) {
-            $this->enable_in_mikrotik($customer);
-            return true;
+        // if ($cliente_status == 1 || $cliente_status == 6) {
+        //     $this->finally_pending_negociations();
+        //     $this->finally_running_negociations($cliente_status);
+        //     $this->enable_in_mikrotik($customer);
+        //     return;
+        // }
+
+        // else if ($cliente_status == 2 && empty($current_two_payment)) {
+        //     $this->layoff_in_mikrotik($customer);
+        //     $this->change_customer_status(2);
+        //     return;
+        // }
+
+        // else if ($cliente_status == 2 && !empty($current_two_payment)) {
+        //     $this->change_customer_status($new_status);
+        //     $this->enable_in_mikrotik($customer);
+        //     return;
+        // }
+
+        // else if ($cliente_status == 4) {
+        //     $this->finally_running_negociations($new_status);
+        //     $this->enable_in_mikrotik($customer);
+        //     return;
+        // }
+
+        // else if ($cliente_status == 5 && empty($current_two_payment)) {
+        //     $this->finally_pending_negociations();
+        //     $this->finally_running_negociations($cliente_status);
+        //     $this->layoff_in_mikrotik($customer);
+        //     $this->change_customer_status(2);
+        //     return;
+        // }
+
+        // else if ($cliente_status == 5 && !empty($current_two_payment)) {
+        //     $this->change_customer_status($new_status);
+        //     $this->enable_in_mikrotik($customer);
+        //     return;
+        // }
+    }
+
+
+    public function is_changeable_status($customer)
+    {
+        // Dia actual
+        $today = intval(date('d'));
+
+        // Dia de pago del cliente
+        $payment_day = $customer[0]['cliente_corte'];
+
+        // Este es el periodo anterior
+        $periodo_anterior = $this->get_before_period();
+
+        // Este es el periodo actual
+        $periodo_actual = $this->get_current_period();
+
+        // Este es el periodo que sigue
+        $periodo_siguiente = $this->get_after_period();
+
+        /**
+         * Es un periodo
+        **/
+        $is_before = in_array($periodo_anterior, $this->periodo_id);
+
+        /**
+         * Es un periodo actual
+        **/
+        $is_current = in_array($periodo_actual, $this->periodo_id);
+
+        /**
+         * Es un periodo posterior
+        **/
+        $is_next = in_array($periodo_siguiente, $this->periodo_id);
+
+        /**
+         * Comenzar a validar los periodos entregados
+        **/
+        if (count($this->periodo_id) == 1) {
+            /**
+             * Si el pago es anterior entonces verificar que aun no ha terminado su periodo
+             *  si ya termino no se cambia el status
+            **/
+            if ($is_before && $payment_day >= $today) {
+                return 'change';
+            }
+            /**
+             * Si esta pagando el periodo anterior y ya paso la fecha de pago
+             * Entonces se mantiene el status actual ej: si esta suspendido 
+             * Se mantiene suspendido
+            **/
+            else if ($is_before && $payment_day < $today) {
+                return 'keep';
+            }
+
+            /**
+             * Si esta pagando un periodo actual pero aun no llega su fecha de pago entonces
+             * El status de deja tal y como esta ej: si esta activo se queda activo 
+             */
+            else if ($is_current && $payment_day > $today) {
+                return 'keep';
+            }
+
+            /**
+             * 
+             * Si el pago es del periodo actual y su fecha de pago ya paso
+             * Cambiar el status del cliente por el correspondiente
+             * 
+            **/
+            else if ($is_current && $payment_day <= $today) {
+                return 'change';   
+            }
+
+            /**
+             * Si el pago es del periodo posterior el status del cliente 
+             * No debe tener ningun cambio solo el status del pago
+            **/
+            else if ($is_next) {
+                return 'keep';   
+            }
+
+            /**
+             * Si no es de ningun periodo entonces mantener el status
+             */
+            if (!$is_before && !$is_current && !$is_next) {
+                return 'keep';
+            }
         }
+        
+        if (count($this->periodo_id) >= 2) {
+            /**
+             * Si dentro de los pagos enviados se encuentran el anterior y el actual
+             * O si se encuentran el anterior, el actual y el siguiente por pagar
+             * Entonces el cliente debe cambiar de status
+            **/
+            if ($is_before && $is_current || $is_before && $is_current && $is_next) {
+                return 'change';
+            }
 
-        if ($cliente_status == 2 && empty($current_two_payment)) {
-            $this->layoff_in_mikrotik($customer);
-            $this->change_customer_status(2);
-            return true;
+            /**
+             * Si esta el pago anterior y no esta ni el siguiente ni el actual 
+             * Y la fecha de pago aun no pasa se cambia el status
+            **/
+            else if ($is_before && !$is_current && !$is_next && $payment_day >= $today) {
+                return 'change';
+            }
+
+            /**
+             * Si el pago es anterior y el dia de pago ya paso
+             * Entonces el status debe mantenerse
+            **/
+            else if ($is_before && !$is_current && !$is_next && $payment_day < $today) {
+                return 'keep';
+            }
+
+            /**
+             * Si solo esta el periodo anterior y el siguiente
+             */
+            else if ($is_before && !$is_current && $is_next && $payment_day >= $today) {
+                return 'change';
+            }
+
+            /**
+             * Si solo esta el periodo anterior y el siguiente
+             */
+            else if ($is_before && !$is_current && $is_next && $payment_day < $today) {
+                return 'keep';
+            }
+
+            /**
+             * El pago es actual y el dia de pago aun no llega
+            **/
+            else if (!$is_before && $is_current && !$is_next && $payment_day >= $today) {
+                return 'keep';
+            }
+
+            /**
+             * El pago es actual y el dia de pago ya paso
+            **/
+            else if (!$is_before && $is_current && !$is_next && $payment_day < $today) {
+                return 'change';
+            }
+
+            /**
+             * El pago es actual y el dia de pago aun no llega
+            **/
+            else if (!$is_before && $is_current && $is_next && $payment_day >= $today) {
+                return 'keep';
+            }
+
+            /**
+             * El pago es actual y el dia de pago ya paso
+            **/
+            else if (!$is_before && $is_current && $is_next && $payment_day < $today) {
+                return 'change';
+            }
+
+            /**
+             * Si es un pago actual y otro que no es el siguiente ni el anterior y la fecha de pago
+             * Ya paso, entonces el status del cliente debe cambiar
+            **/
+            else if (!$is_before && !$is_current && $is_next) {
+                return 'keep';
+            }
+
+            /**
+             * Si no es de ninguno de los periodos marcados no hacer nada
+             */
+            else if (!$is_before && !$is_current && !$is_next) {
+                return 'keep';
+            }
         }
+    }
 
-        if ($cliente_status == 2 && !empty($current_two_payment)) {
-            $this->enable_in_mikrotik($customer);
-            $this->change_customer_status($new_status);
-            return true;
+
+    /**
+     * Finaliza las negociaciones pendientes que coinciden con el período actual.
+     * 
+     * Esta función busca todas las negociaciones pendientes del cliente y las compara con los períodos actuales.
+     * Si una negociación coincide con el período actual, se finaliza automáticamente.
+     * 
+     * @return void
+     */
+    public function finally_pending_negociations() 
+    {
+        /**
+         * Buscar negociaciones pendientes
+        **/
+        $negociaciones = $this->get_negociations_pending();
+
+        /**
+         * Si el período de la negociación es igual al pago
+         * Esta debe finalizarse
+        **/
+        if (count($negociaciones) > 0) {
+            foreach($negociaciones as $negociacion) {
+                $fecha_inicio = explode('-', $negociacion['fecha_inicio']);
+                $periodo_negociacion = $fecha_inicio[1].$fecha_inicio[0];
+                if (in_array($periodo_negociacion, $this->periodo_id)) {
+                    $this->end_negociation_id($negociacion['id_negociacion']);
+                }
+            }
         }
+    }
 
-        if ($cliente_status == 4 && empty($current_payment)) {
-            $this->enable_in_mikrotik($customer);
-            return true;
+
+    public function finally_running_negociations() 
+    {
+        /**
+         * Buscar negociaciones pendientes
+        **/
+        $negociaciones = $this->get_negociations_running();
+
+        /**
+         * Si el período de la negociación es igual al pago
+         * Esta debe finalizarse
+        **/
+        if (count($negociaciones) > 0) {
+            foreach($negociaciones as $negociacion) {
+                $fecha_inicio = explode('-', $negociacion['fecha_inicio']);
+                $periodo_negociacion = $fecha_inicio[1].$fecha_inicio[0];
+                if (in_array($periodo_negociacion, $this->periodo_id)) {
+                    $this->end_negociation_id($negociacion['id_negociacion']);
+                }
+            }
         }
+    }
 
-        if ($cliente_status == 4 && !empty($current_payment)) {
-            $this->end_negociation();
-            $this->enable_in_mikrotik($customer);
-            $this->change_customer_status($new_status);
-            return true;
-        }
 
-        if ($cliente_status == 5 && empty($current_two_payment)) {
-            $this->layoff_in_mikrotik($customer);
-            $this->change_customer_status(2);
-            return true;
-        }
 
-        if ($cliente_status == 5 && !empty($current_two_payment)) {
-            $this->enable_in_mikrotik($customer);
-            $this->change_customer_status($new_status);
-            return true;
-        }
+    public function get_negociations_pending()
+    {
+        $query = Flight::gnconn()->prepare("
+            SELECT * FROM negociaciones
+            WHERE status_negociacion = 2
+            AND cliente_id = ?
+        ");
+        $query->execute([ $this->cliente_id ]);
+        $rows = $query->fetchAll();
+        return $rows;
+    }
 
-        return true;
+
+    public function get_negociations_running()
+    {
+        $query = Flight::gnconn()->prepare("
+            SELECT * FROM negociaciones
+            WHERE status_negociacion = 1
+            AND cliente_id = ?
+        ");
+        $query->execute([ $this->cliente_id ]);
+        $rows = $query->fetchAll();
+        return $rows;
     }
 
     /**
@@ -889,10 +1313,10 @@ class Payment extends Messenger
         try {
             $query = Flight::gnconn()->prepare("
                 UPDATE negociaciones 
-                SET status_negociacion = 3 
+                SET status_negociacion = 3,
+                fecha_fin = CURRENT_DATE()
                 WHERE cliente_id = ? 
                 AND status_negociacion = 1
-                AND fecha_fin = CURRENT_DATE()
             ");
             $query->execute([ $this->cliente_id ]);
         } catch (Exception $error) {
@@ -900,6 +1324,33 @@ class Payment extends Messenger
             $this->error_message = "Error al finalizar la negociacion!";
         }
     }
+
+
+    /**
+     * end_negociation    Finalizar una negociacion
+     * Negociaciones
+     * 0 Rechazada
+     * 1 Corriendo
+     * 2 Revision
+     * 3 Finalizada
+     * @return void
+     **/
+    public function end_negociation_id($id_negociacion) : void
+    {
+        try {
+            $query = Flight::gnconn()->prepare("
+                UPDATE negociaciones 
+                SET status_negociacion = 3,
+                fecha_fin = CURRENT_DATE()
+                WHERE id_negociacion = ?
+            ");
+            $query->execute([ $id_negociacion ]);
+        } catch (Exception $error) {
+            $this->error = true;
+            $this->error_message = "Error al finalizar la negociacion!";
+        }
+    }
+
 
     /**
      * layoff_in_mikrotik
@@ -961,11 +1412,11 @@ class Payment extends Messenger
     }
 
     /**
-     * get_mikrotik_credentials
+     * get_customer_join_mikrotik
      *
      * @return array
      */
-    public function get_mikrotik_credentials($cliente_id)
+    public function get_customer_join_mikrotik()
     {
         $query = Flight::gnconn()->prepare("
             SELECT 
@@ -1000,7 +1451,7 @@ class Payment extends Messenger
             ON colonias.mikrotik_control = mikrotiks.mikrotik_id 
             WHERE clientes.cliente_id = ?
         ");
-        $query->execute([ $cliente_id ]);
+        $query->execute([ $this->cliente_id ]);
         $rows = $query->fetchAll();
         return $rows;
     }
@@ -1014,9 +1465,9 @@ class Payment extends Messenger
      */
     public function payment_of_current_periods($cliente_id)
     {
-        $to_periods = $this->get_to_periods();
-        $before_periods = $this->get_before_periods();
-        $periods = array($to_periods[0], $before_periods[0]);
+        $to_periods = $this->get_current_period();
+        $before_periods = $this->get_before_period();
+        $periods = [$to_periods, $before_periods];
 
         $IN_PERIODS = $this->transform_array_string_in_sql($periods);
 
@@ -1037,9 +1488,9 @@ class Payment extends Messenger
 
     public function payment_of_current_two_periods($cliente_id)
     {
-        $to_periods = $this->get_to_periods();
-        $before_periods = $this->get_before_periods();
-        $periods = array($to_periods[0], $before_periods[0]);
+        $to_periods = $this->get_current_period();
+        $before_periods = $this->get_before_period();
+        $periods = [$to_periods, $before_periods];
 
         $IN_PERIODS = $this->transform_array_string_in_sql($periods);
         
@@ -1059,52 +1510,71 @@ class Payment extends Messenger
 
 
     /**
-     * get_to_periods
+     * get_current_period
+     * 
+     * Obtener el periodo actual
      *
-     * @return array
+     * @return string
      */
-    public function get_to_periods() {
-        $SQL = "SELECT DATE(CURRENT_DATE) AS to_date";
-        $query = Flight::gnconn()->prepare($SQL);
+    public function get_current_period() {
+        $query = Flight::gnconn()->prepare("
+            SELECT 
+            DATE(CURRENT_DATE) 
+            AS to_date
+        ");
         $query->execute();
         $rows = $query->fetchAll();
+
         $fecha = explode("-", $rows[0]["to_date"]);
-        $periodo_actual = $fecha[1] . $fecha[0];
-        $periodos = array($periodo_actual);
-        return $periodos;
+
+        $periodo_actual = $fecha[1].$fecha[0];
+
+        return $periodo_actual;
     }
 
     /**
-     * get_after_periods
+     * get_after_period
+     * 
      * Obtener los periodos posteriores
-     * @return array
+     * 
+     * @return string
      */
-    public function get_after_periods() {
-        $SQL = "SELECT DATE(DATE_ADD(CURRENT_DATE, INTERVAL +1 MONTH)) AS after_date";
-        $query = Flight::gnconn()->prepare($SQL);
+    public function get_after_period() {
+        $query = Flight::gnconn()->prepare("
+            SELECT 
+            DATE(DATE_ADD(CURRENT_DATE, INTERVAL +1 MONTH)) 
+            AS after_date
+        ");
         $query->execute();
         $rows = $query->fetchAll();
+
         $fecha = explode("-", $rows[0]["after_date"]);
-        $periodo_posterior = $fecha[1] . $fecha[0];
-        $periodos = array($periodo_posterior);
-        return $periodos;
+
+        $periodo_posterior = $fecha[1].$fecha[0];
+
+        return $periodo_posterior;
     }
 
         
     /**
-     * get_before_periods
+     * get_before_period
      * Obtener el periodo anterior
-     * @return array
+     * 
+     * @return string
      */
-    public function get_before_periods() {
-        $SQL = "SELECT DATE(DATE_ADD(CURRENT_DATE, INTERVAL -1 MONTH)) AS before_date";
-        $query = Flight::gnconn()->prepare($SQL);
+    public function get_before_period() {
+        $query = Flight::gnconn()->prepare("
+            SELECT DATE(DATE_ADD(CURRENT_DATE, INTERVAL -1 MONTH)) 
+            AS before_date
+        ");
         $query->execute();
         $rows = $query->fetchAll();
+
         $fecha = explode("-", $rows[0]["before_date"]);
-        $periodo_anterior = $fecha[1] . $fecha[0];
-        $periodos = array($periodo_anterior);
-        return $periodos;
+
+        $periodo_anterior = $fecha[1].$fecha[0];
+
+        return $periodo_anterior;
     }
 
 
@@ -1335,29 +1805,54 @@ class Payment extends Messenger
 
         switch ($rows[0]["metodo_bloqueo"]) {
             case "DHCP":
-                $this->activation = true;
-                $conn->remove_from_address_list(
-                    $rows[0]["cliente_ip"],
-                    "MOROSOS"
-                );
+                $conn->remove_from_address_list($rows[0]["cliente_ip"], "MOROSOS");
+                $in_list = $conn->in_address_list($rows[0]['cliente_ip'], 'MOROSOS');
+                /**
+                 * ¿Continua en morosos?
+                 */
+                if (!$in_list) {
+                    $this->activation = true;
+                } 
+
+                /**
+                 * Ya no esta en morosos
+                 */
+                if ($in_list) {
+                    $this->activation = false;
+                }
+
+                /**
+                 * Desconectar mikrotik
+                 */
                 $conn->disconnect();
             break;
 
             case "ARP":
-                $this->activation = true;
-                $conn->remove_from_address_list(
-                    $rows[0]["cliente_ip"],
-                    "MOROSOS"
-                );
+               $conn->remove_from_address_list($rows[0]["cliente_ip"], "MOROSOS");
+                $in_list = $conn->in_address_list($rows[0]['cliente_ip'], 'MOROSOS');
+                /**
+                 * ¿Continua en morosos?
+                 */
+                if (!$in_list) {
+                    $this->activation = true;
+                } 
+                
+                /**
+                 * Ya no esta en morosos
+                 */
+                if ($in_list) {
+                    $this->activation = false;
+                }
+
+                /**
+                 * Desconectar mikrotik
+                 */
                 $conn->disconnect();
             break;
 
             case "PPPOE":
+                $conn->enable_secret($rows[0]["user_pppoe"], $rows[0]['profile']);
                 $this->activation = true;
-                $conn->enable_secret(
-                    $rows[0]["user_pppoe"],
-                    $rows[0]['profile']
-                );
                 $conn->disconnect();
             break;
             default: // Mostrar nada

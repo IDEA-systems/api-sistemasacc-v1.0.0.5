@@ -880,18 +880,16 @@ class Mikrotik
 
 
     public function in_address_list($address, $address_list = "MOROSOS") {
-        if (!$this->connected) return false;
-        if ($this->connected) {
-            $found_address = false;
-            $list = $this->comm("/ip/firewall/address-list/getall");
-            foreach ($list as $item) {
-                if ($item['list'] != $address_list) continue;
-                if ($item["address"] == $address && $item["list"] == $address_list) {
-                    $found_address = true;
-                }
+        $found_address = false;
+        $list = $this->comm("/ip/firewall/address-list/getall");
+        foreach ($list as $item) {
+            if ($item['list'] != $address_list) continue;
+            if ($item["address"] == $address && $item["list"] == $address_list) {
+                $found_address = true;
+                break;
             }
-            return $found_address;
         }
+        return $found_address;
     }
 
 

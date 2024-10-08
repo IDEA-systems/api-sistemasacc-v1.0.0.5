@@ -66,6 +66,14 @@ if ($is_user) {
                 "details" => $process->error_message,
             ]);
         }
+
+        if (!$process->error) {
+            Flight::json([
+                "status" => 200,
+                "title" => "Proceso terminado!",
+                "details" => "El proceso termino correctamente!",
+            ]);
+        }
     }
 
     if (!$whatsapp) {

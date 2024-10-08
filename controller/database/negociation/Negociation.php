@@ -483,8 +483,36 @@ class Negociation extends Messenger
     }
 
 
+    /**
+     * add_negociation_as_root
+     * 
+     * Agrega una negociación como root
+     * 
+     * Esta función se encarga de agregar una nueva negociación para un cliente, 
+     * verificando previamente si el cliente tiene pagos pendientes para el período de la negociación.
+     * Si el cliente no tiene pagos pendientes, se procede a realizar las operaciones según el estado del cliente.
+     * 
+     * @return void
+    **/
     public function add_negociation_as_root()
     {
+        $explode_date = explode('-', $this->fecha_inicio);
+        $periodo_id = $explode_date[1].$explode_date[0];
+
+        /**
+         * Buscar los pagos del periodo que corresponden a la negociacion
+         */
+        $payments = $this->payment_from_period_negociation($periodo_id);
+
+        /**
+         * Si tiene pagos de ese periodo la negociacion no se puede realizar
+         */
+        if (count($payments) > 0) {
+            $this->error = true;
+            $this->error_message = "Ya existen pagos para el periodo seleccionado!";
+            return;
+        }
+
         $customer = $this->get_customer_by_id();
 
         /**
@@ -523,6 +551,23 @@ class Negociation extends Messenger
 
     public function add_negociation_as_user_normal()
     {
+        $explode_date = explode('-', $this->fecha_inicio);
+        $periodo_id = $explode_date[0].$explode_date[1];
+
+        /**
+         * Buscar los pagos del periodo que corresponden a la negociacion
+         */
+        $payments = $this->payment_from_period_negociation($periodo_id);
+
+        /**
+         * Si tiene pagos de ese periodo la negociacion no se puede realizar
+         */
+        if (count($payments) > 0) {
+            $this->error = true;
+            $this->error_message = "El cliente cuenta con pagos para el periodo de la negociacion!";
+            return;
+        }
+
         /**
          * Obtener las negociaciones mensuales
         **/
@@ -626,6 +671,24 @@ class Negociation extends Messenger
         }
     }
 
+
+
+    public function payment_from_period_negociation($periodo_id)
+    {
+        $query = Flight::gnconn()->prepare("
+            SELECT * FROM pagos 
+            WHERE cliente_id = ? 
+            AND pagos.periodo_id = ?
+            AND status_pago IN(1,2)
+            ORDER BY pago_fecha_captura ASC
+        ");
+        $query->execute([ 
+            $this->cliente_id,
+            $periodo_id
+        ]);
+        $rows = $query->fetchAll();
+        return $rows;
+    }
 
 
     public function get_pending_or_runing()
