@@ -446,7 +446,7 @@ class Process extends Messenger
          * Y enviar los mensajes de alerta de pago
          */
         foreach ($cuts as $cortes) {
-            $is_after = in_array($cortes['dia_incio'], $dias_finales) 
+            $is_after = in_array($cortes['dia_inicio'], $dias_finales) 
                 && in_array($cortes['dia_pago'], $dias_inicio);
 
             $is_current = in_array($cortes['dia_pago'], $dias_inicio) 
