@@ -82,6 +82,13 @@ class Process extends Messenger
         }
 
         /**
+         * Verificar los pagos en status autorizacion
+         * Y asignar el status al cliente si esta activo, suspendido, negociacion, nuevo
+        **/
+        $this->verify_payment_in_autorization();
+        if ($this->error) return;
+
+        /**
          * Obtener la lista de cortes de servicios
          * Para seleccionar a los clientes que se van a suspender
          * en base a los dias de inicio y finalizacion de corte
@@ -139,6 +146,13 @@ class Process extends Messenger
         if (!$is_pending) return;
 
         /**
+         * Si hay alguno en negociacion y que ya pago
+         * Finalizar la negociacion y cambiar el status a activo
+        **/
+        $this->activate_customer();
+        if ($this->error) return;
+
+        /**
          * 
          * Comenzar las negociaciones que inician mañana
          * Para que los clientes no se suspendan
@@ -192,7 +206,6 @@ class Process extends Messenger
             **/
             $this->finalize_negociations();
 
-
             /**
              * @var array
              * Generar el mensaje para el administrador
@@ -210,7 +223,6 @@ class Process extends Messenger
         }
 
         /**
-         * @var mixed
          * Finalizar el proceso de negociaciones
         **/
         $this->end_process('negociacion');
@@ -640,6 +652,79 @@ class Process extends Messenger
     }
 
 
+    public function verify_payment_in_autorization()
+    {
+        try {
+            $periodos = $this->get_to_periods();
+            $periodo_actual = $this->convert_to_string($periodos);
+
+            $query = Flight::gnconn()->prepare("
+                UPDATE clientes_servicios
+                JOIN pagos
+                ON clientes_servicios.cliente_id = pagos.cliente_id
+                SET clientes_servicios.cliente_status = 5
+                WHERE clientes_servicios.cliente_corte = DAY(DATE_ADD(CURRENT_DATE, INTERVAL +1 DAY))
+                AND pagos.status_pago = 2
+                AND pagos.periodo_id IN $periodo_actual
+                AND clientes_servicios.cliente_status IN(1,2,4,6)
+            ");
+            $query->execute();
+        } 
+        catch (Exception $error) {
+            $this->error = true;
+            $this->error_message = "Error al iniciar las negociaciones";
+        }
+    }
+
+   
+    /**
+     * activate_customer
+     * 
+     * Activa el cliente
+     * 
+     * Esta función activa el estado del cliente y las negociaciones
+     * cuando la fecha de inicio de la negociación es igual a la fecha actual o al día siguiente.
+     * 
+     * Actualiza:
+     * - El estado de la negociación a 3 (activa)
+     * - El estado del cliente a 1 (activo)
+     * 
+     * Condiciones:
+     * - La fecha de inicio de la negociación es igual a la fecha actual o al día siguiente
+     * - El estado actual de la negociación es 1 (iniciada)
+     * 
+     * @return void
+     * @throws Exception Si ocurre un error al activar el cliente
+    */
+    public function activate_customer()
+    {
+        try {
+            $periodos = $this->get_to_periods();
+            $periodo_actual = $this->convert_to_string($periodos);
+
+            $query = Flight::gnconn()->prepare("
+                UPDATE clientes_servicios
+                JOIN negociaciones
+                ON clientes_servicios.cliente_id = negociaciones.cliente_id
+                SET negociaciones.status_negociacion = 3,
+                clientes_servicios.cliente_status = 1
+                WHERE DATE_ADD(CURRENT_DATE, INTERVAL +1 DAY) = DATE(negociaciones.fecha_fin)
+                OR DATE(CURRENT_DATE()) >= DATE(negociaciones.fecha_fin)
+                AND negociaciones.status_negociacion = 1
+                AND EXISTS (
+                    SELECT pagos.pago_id FROM pagos
+                    WHERE pagos.periodo_id IN $periodo_actual
+                    AND pagos.cliente_id = negociaciones.cliente_id
+                );
+            ");
+            $query->execute();
+        } catch (Exception $error) {
+            $this->error = true;
+            $this->error_message = "Error al iniciar las negociaciones";
+        }
+    }
+
+
     /**
      * start_negociations
      * 
@@ -677,7 +762,6 @@ class Process extends Messenger
             $this->error = true;
             $this->error_message = "Error al iniciar las negociaciones";
         }
-            
     }
 
 
