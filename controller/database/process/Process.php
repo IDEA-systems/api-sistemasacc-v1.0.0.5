@@ -708,14 +708,14 @@ class Process extends Messenger
                 ON clientes_servicios.cliente_id = negociaciones.cliente_id
                 SET negociaciones.status_negociacion = 3,
                 clientes_servicios.cliente_status = 1
-                WHERE DATE_ADD(CURRENT_DATE, INTERVAL +1 DAY) = DATE(negociaciones.fecha_fin)
-                OR DATE(CURRENT_DATE()) >= DATE(negociaciones.fecha_fin)
-                AND negociaciones.status_negociacion = 1
+                WHERE DATE_ADD(CURRENT_DATE(), INTERVAL +1 DAY) >= DATE(negociaciones.fecha_fin)
                 AND EXISTS (
                     SELECT pagos.pago_id FROM pagos
                     WHERE pagos.periodo_id IN $periodo_actual
                     AND pagos.cliente_id = negociaciones.cliente_id
-                );
+                )
+                AND negociaciones.status_negociacion = 1
+                AND clientes_servicios.cliente_status = 4;
             ");
             $query->execute();
         } catch (Exception $error) {
@@ -753,9 +753,9 @@ class Process extends Messenger
                 ON clientes_servicios.cliente_id = negociaciones.cliente_id
                 SET negociaciones.status_negociacion = 1,
                 clientes_servicios.cliente_status = 4
-                WHERE DATE_ADD(CURRENT_DATE, INTERVAL +1 DAY) = DATE(negociaciones.fecha_inicio)
-                OR DATE(CURRENT_DATE()) >= DATE(negociaciones.fecha_inicio)
+                WHERE DATE_ADD(CURRENT_DATE(), INTERVAL +1 DAY) = DATE(negociaciones.fecha_inicio)
                 AND negociaciones.status_negociacion = 2
+                AND clientes_servicios.cliente_status IN(1,2,5,6);
             ");
             $query->execute();
         } catch (Exception $error) {
@@ -859,7 +859,7 @@ class Process extends Messenger
                 ON negociaciones.cliente_id = clientes_servicios.cliente_id
                 SET negociaciones.status_negociacion = 3,
                 clientes_servicios.cliente_status = 2,
-                clientes_servicios.ultima_suspencion = CURRENT_TIMESTAMP()
+                clientes_servicios.ultima_suspension = CURRENT_TIMESTAMP()
                 WHERE DATE(negociaciones.fecha_fin) <= DATE(CURRENT_DATE())
                 AND DATEDIFF(CURRENT_DATE(), negociaciones.fecha_fin) >= 0
                 AND negociaciones.status_negociacion = 1
@@ -1067,7 +1067,7 @@ class Process extends Messenger
                 AND pagos.periodo_id IN $string_periods
             ) 
             AND cortes_servicio.dia_comienzo <= DAY(CURRENT_DATE) 
-            AND cortes_servicio.dia_pago >= DAY(CURRENT_DATE)
+            AND cortes_servicio.dia_pago > DAY(CURRENT_DATE)
             AND clientes_servicios.cliente_paquete != 0
             AND clientes_servicios.suspender != 0
             AND clientes_servicios.cliente_status IN (1,2,4,5,6)
@@ -1111,7 +1111,7 @@ class Process extends Messenger
                 AND pagos.periodo_id IN $string_periods 
                 AND pagos.status_pago IN(1,2)
             )
-            AND DAY(CURRENT_DATE) - clientes_servicios.cliente_corte BETWEEN 0 AND 3
+            AND DAY(CURRENT_DATE()) - clientes_servicios.cliente_corte BETWEEN 0 AND 3
             AND clientes_servicios.cliente_status IN (1,2,4,5,6)
             AND clientes_servicios.cliente_paquete != 0
             AND clientes_servicios.suspender != 0
