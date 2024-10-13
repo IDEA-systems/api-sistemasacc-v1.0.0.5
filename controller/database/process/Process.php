@@ -107,7 +107,6 @@ class Process extends Messenger
          * El dia de pago y el de suspension deben estar en el rango de dias iniciales
          * O bien el dia de pago y de suspencion deben estar en el rango de dias finales
         */
-        
         $dias_inicio = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17];
         $dias_finales = [18,19,20,21,22,23,24,25,26,27,28,29,30,31];
 
@@ -120,7 +119,10 @@ class Process extends Messenger
                 || in_array($cortes['dia_pago'], $dias_finales) 
                 && in_array($cortes['dia_terminacion'], $dias_finales);
 
-            $periods = $is_before ? $this->get_before_periods() : $this->get_to_periods();
+            $periods = $is_before 
+                ? $this->get_before_periods() 
+                : $this->get_to_periods();
+
             $this->layoff_in_database($periods, $cortes["dia_pago"]);
         }
 
@@ -622,23 +624,23 @@ class Process extends Messenger
         $status = $this->suspender_autorizacion == 1 ? [1,5] : [1];
 
         // Solo suspender si esta activa la opcion en la configuracion del sistema 
-        $IN_PERIODS = $this->convert_to_string($periods);  // String SQL (IN)
+        $periods_string = $this->convert_to_string($periods);  // String SQL (IN)
         
         // Convertir el array de status a un string SQL (IN)
-        $IN_STATUS = $this->convert_to_string($status);
+        $status_string = $this->convert_to_string($status);
 
         try {
             $query = Flight::gnconn()->prepare("
                 UPDATE clientes_servicios 
                 SET cliente_status = 2,
-                ultima_suspension = CURRENT_TIMESTAMP()
+                ultima_suspension = current_timestamp()
                 WHERE NOT EXISTS(
                     SELECT pagos.pago_id FROM pagos 
                     WHERE pagos.cliente_id = clientes_servicios.cliente_id 
-                    AND pagos.periodo_id IN $IN_PERIODS
+                    AND pagos.periodo_id IN $periods_string
                     AND pagos.status_pago IN (1,2)
                 ) 
-                AND cliente_status IN $IN_STATUS
+                AND cliente_status IN $status_string
                 AND cliente_corte = $corte_id
                 AND cliente_paquete != 0
                 AND cliente_tipo = 1
@@ -1135,6 +1137,7 @@ class Process extends Messenger
         $query = Flight::gnconn()->prepare("
             SELECT * FROM cortes_servicio 
             WHERE dia_terminacion <= DAY(CURRENT_DATE)
+            AND DAY(CURRENT_DATE()) - dia_terminacion BETWEEN 0 AND 2
         ");
         $query->execute();
         $rows = $query->fetchAll();
