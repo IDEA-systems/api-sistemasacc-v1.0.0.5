@@ -589,6 +589,12 @@ class Process extends Messenger
                 return;
             }
         }
+
+        /**
+         * Terminar el proceso de suspension
+         * En los mikrotiks
+         */
+        $this->end_process("add_morosos");
     }
 
 
