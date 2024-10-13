@@ -963,7 +963,7 @@ class Process extends Messenger
             ON colonias.mikrotik_control = mikrotiks.mikrotik_id
             INNER JOIN cortes_servicio 
             ON clientes_servicios.cliente_corte = cortes_servicio.corte_id 
-            WHERE DATEDIFF(CURRENT_DATE(), clientes_servicios.ultima_suspension) BETWEEN 0 AND 3
+            WHERE DATE(clientes_servicios.ultima_suspension) = CURRENT_DATE()
             AND clientes_servicios.cliente_status = 2
             AND clientes_servicios.suspender = 1
         ");
