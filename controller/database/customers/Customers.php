@@ -827,7 +827,7 @@ class Customer extends Messenger
         try {
             $query = Flight::gnconn()->prepare("
                 INSERT INTO `clientes_servicios`
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,0000-00-00:00:00))
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,0000-00-00:00:00)
             ");
             $query->execute([
                 $this->cliente_id, 
