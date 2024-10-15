@@ -3,54 +3,54 @@
 class Customer extends Messenger
 {
     // Variables de formuñlarios
-    private $cliente_id;
-    private $cliente_telefono;
-    private $cliente_email;
-    private $serie_modem;
-    private $cliente_mac;
-    private $cliente_ip;
-    private $servicio_id;
-    private $cliente_nombres;
-    private $cliente_olt;
-    private $cliente_apellidos;
-    private $cliente_telefono2;
-    private $equipo_instalado;
-    private $servicio_adicional;
-    private $precio_instalacion;
-    private $cliente_telegram;
-    private $costo_servicio;
-    private $cliente_domicilio;
-    private $cliente_ine;
-    private $cliente_rfc;
-    private $cliente_razon_social;
-    private $cliente_ap;
-    private $status_equipo;
-    private $status_equipo_instalado;
-    private $cliente_instalacion;
-    private $comentario;
-    private $cliente_maps_ubicacion;
-    private $metodo_bloqueo;
-    private $mensualidad;
-    private $costo_renta;
-    private $cliente_tipo;
-    private $cliente_paquete;
-    private $cliente_status;
-    private $cliente_corte;
-    private $colonia;
-    private $antena_instalada;
-    private $modem_instalado;
-    private $nombre_colonia;
-    private $tipo_servicio;
-    private $server;
-    private $profiles;
+    public $cliente_id;
+    public $cliente_telefono;
+    public $cliente_email;
+    public $serie_modem;
+    public $cliente_mac;
+    public $cliente_ip;
+    public $servicio_id;
+    public $cliente_nombres;
+    public $cliente_olt;
+    public $cliente_apellidos;
+    public $cliente_telefono2;
+    public $equipo_instalado;
+    public $servicio_adicional;
+    public $precio_instalacion;
+    public $cliente_telegram;
+    public $costo_servicio;
+    public $cliente_domicilio;
+    public $cliente_ine;
+    public $cliente_rfc;
+    public $cliente_razon_social;
+    public $cliente_ap;
+    public $status_equipo;
+    public $status_equipo_instalado;
+    public $cliente_instalacion;
+    public $comentario;
+    public $cliente_maps_ubicacion;
+    public $metodo_bloqueo;
+    public $mensualidad;
+    public $costo_renta;
+    public $cliente_tipo;
+    public $cliente_paquete;
+    public $cliente_status;
+    public $cliente_corte;
+    public $colonia;
+    public $antena_instalada;
+    public $modem_instalado;
+    public $nombre_colonia;
+    public $tipo_servicio;
+    public $server;
+    public $profiles;
     public $name_secret;
     public $password_secret;
-    private $interface_arp;
-    private $mikrotik_control;
-    private $serie_equipo;
-    private $ancho_banda;
-    private $suspender;
-    private $mikrotik_update;
+    public $interface_arp;
+    public $mikrotik_control;
+    public $serie_equipo;
+    public $ancho_banda;
+    public $suspender;
+    public $mikrotik_update;
     public $arp;
     public $leases;
     public $queues;
@@ -827,7 +827,7 @@ class Customer extends Messenger
         try {
             $query = Flight::gnconn()->prepare("
                 INSERT INTO `clientes_servicios`
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,0000-00-00:00:00))
             ");
             $query->execute([
                 $this->cliente_id, 
@@ -1854,7 +1854,7 @@ class Customer extends Messenger
      * @param  string $cliente_id
      * @return array
      */
-    private function get_customer_mikrotik_data($cliente_id)
+    public function get_customer_mikrotik_data($cliente_id)
     {
         $query = Flight::gnconn()->prepare("
             SELECT clientes.cliente_id, CONCAT(clientes.cliente_nombres, ' ', clientes.cliente_apellidos) AS nombres, 
