@@ -726,7 +726,8 @@ class Process extends Messenger
                 AND clientes_servicios.cliente_status = 4;
             ");
             $query->execute();
-        } catch (Exception $error) {
+        } 
+        catch (Exception $error) {
             $this->error = true;
             $this->error_message = "Error al iniciar las negociaciones";
         }

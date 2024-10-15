@@ -153,7 +153,6 @@ class Payment extends Messenger
         $cliente_id = $customer[0]["cliente_id"];
 
         $periods = count($this->periodo_id) >= 2 ? implode("*", $this->periodo_id) : $this->periodo_id[0];
-        $phone = $customer[0]["cliente_telefono"];
         $corte = $customer[0]["cliente_corte"];
         $monto = $this->pago_monto * count($this->periodo_id);
         $descuento = $this->pago_descuento * count($this->periodo_id);
@@ -183,12 +182,12 @@ class Payment extends Messenger
             "mediaUrl" => $this->config["URL_FRONTEND"]."/panel/clientes/voucher.php$params"
         ];
 
-        $message = [ 
+        $details_payment = [ 
             "phone" => $brand[0]['codigo_pais'] . $phone,  
             "message" => $message 
         ];
 
-        $this->whatsapp($message, $cliente_id, "payment");
+        $this->whatsapp($details_payment, $cliente_id, "payment");
         
         $this->whatsapp($voucher_data, $cliente_id, "voucher");
     }
