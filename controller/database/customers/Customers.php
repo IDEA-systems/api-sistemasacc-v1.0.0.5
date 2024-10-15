@@ -827,7 +827,7 @@ class Customer extends Messenger
         try {
             $query = Flight::gnconn()->prepare("
                 INSERT INTO `clientes_servicios`
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,0000-00-00:00:00)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             ");
             $query->execute([
                 $this->cliente_id, 
@@ -840,7 +840,8 @@ class Customer extends Messenger
                 $this->status_equipo, 
                 $this->antena_instalada, 
                 $this->modem_instalado, 
-                $this->suspender
+                $this->suspender,
+                date('Y-m-d:h:m:s')
             ]);
         } catch (Exception $error) {
             $this->error = true;
