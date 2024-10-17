@@ -843,9 +843,10 @@ class Customer extends Messenger
                 $this->suspender,
                 date('Y-m-d:h:m:s')
             ]);
-        } catch (Exception $error) {
+        } 
+        catch (Exception $error) {
             $this->error = true;
-            $this->error_message = $error->getMessage();//"Error en servicios del cliente!";
+            $this->error_message = $error->getMessage();
             $this->delete($this->cliente_id);
         }
     }

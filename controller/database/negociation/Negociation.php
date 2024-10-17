@@ -44,13 +44,74 @@ class Negociation extends Messenger
         }
     }
 
-    public function get_client_negociation()
+
+    public function get_all_negociations($filters)
     {
-        $SQL = "SELECT * FROM negociaciones WHERE cliente_id = '$this->cliente_id' AND status_negociacion = 1";
-        $query = Flight::gnconn()->prepare($SQL);
+        $limit = $filters['limit'];
+        $status = $filters['status'];
+        $empleado_id = $filters['empleado_id'];
+        $fecha_inicio = $filters['fecha_inicio'];
+        $fecha_fin = $filters['fecha_fin'];
+        $parameters = $filters['parameters'];
+
+        $sql = "
+            SELECT 
+                negociaciones.*,
+                status_negociaciones.nombre as nombre_status_negociacion,
+                clientes.cliente_nombres,
+                clientes.cliente_apellidos,
+                colonias.nombre_colonia,
+                empleados.empleado_nombre,
+                empleados.empleado_apellido
+            FROM negociaciones 
+            INNER JOIN status_negociaciones
+            ON negociaciones.status_negociacion = status_negociaciones.status_negociacion
+            INNER JOIN usuarios 
+            ON negociaciones.usuario_negociacion = usuarios.usuario_id
+            LEFT JOIN empleados 
+            ON usuarios.usuario_id = empleados.usuario_id
+            INNER JOIN clientes
+            ON negociaciones.cliente_id = clientes.cliente_id
+            INNER JOIN clientes_servicios 
+            ON negociaciones.cliente_id = clientes_servicios.cliente_id
+            INNER JOIN colonias 
+            ON clientes_servicios.colonia = colonias.colonia_id
+            WHERE negociaciones.status_negociacion $status
+        ";
+
+        if (!is_null($empleado_id)) {
+            $sql .= " AND empleados.empleado_id = '$empleado_id' ";
+        }
+
+        if (is_null($fecha_fin) && !is_null($fecha_inicio)) {
+            $sql .= " AND negociaciones.fecha_inicio = '$fecha_inicio' ";
+        }
+
+        if (is_null($fecha_inicio) && !is_null($fecha_fin)) {
+            $sql .= " AND negociaciones.fecha_fin = '$fecha_fin' ";
+        }
+
+        if (!is_null($fecha_fin) && !is_null($fecha_fin)) {
+            $sql .= " 
+                AND negociaciones.fecha_inicio >= '$fecha_inicio' 
+                AND negociaciones.fecha_inicio <= '$fecha_fin'
+                OR negociaciones.fecha_fin >= '$fecha_inicio' 
+                AND negociaciones.fecha_fin <= '$fecha_fin'
+            ";
+        }
+
+        if (!is_null($parameters)) {
+            $sql .= " 
+                AND clientes.cliente_nombres LIKE '%$parameters%' 
+                OR clientes.cliente_apellidos LIKE '%$parameters%'
+            ";
+        }
+
+        $sql .= " ORDER BY negociaciones.status_negociacion ASC $limit";
+        $query = Flight::gnconn()->prepare($sql);
         $query->execute();
         $rows = $query->fetchAll();
-        return !empty($rows);
+        return $rows;
     }
 
     public function get_negociation_to_month()
