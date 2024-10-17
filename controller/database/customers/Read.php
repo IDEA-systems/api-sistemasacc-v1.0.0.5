@@ -395,8 +395,8 @@ class ReadCustomers extends Messenger
                 break;
 
                 case "PPPOE":
-                    $this->mikrotik["morosos"] = $this->search_in_secrets($rows, $conn);
-                    $this->mikrotik["ping"] = $this->search_in_actives($rows, $conn);
+                    $this->search_in_secrets($rows, $conn);
+                    $this->search_in_actives($rows, $conn);
                     $conn->disconnect();
                 break;
                 default: // Mostrar nada
