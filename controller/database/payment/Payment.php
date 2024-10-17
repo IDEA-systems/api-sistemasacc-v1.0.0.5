@@ -532,6 +532,8 @@ class Payment extends Messenger
         // Obtener los datos del pago
         $payment = $this->get_payment_by_id();
 
+        $this->periodo_id = array($payment[0]["periodo_id"]);
+
         // Agregar a movimientos de la caja
         $this->add_to_moves($payment);
         if ($this->error) return;
@@ -657,7 +659,6 @@ class Payment extends Messenger
      */
     public function add_to_moves($rows)
     {
-        $this->periodo_id = $rows[0]["periodo_id"];
         $this->pago_descuento = $rows[0]["pago_descuento"];
         $this->pago_monto = $rows[0]["pago_monto"];
         $this->tipo_pago = $rows[0]["tipo_pago"];
@@ -684,7 +685,7 @@ class Payment extends Messenger
             ]);
         } catch(Exception $error) {
             $this->error = true;
-            $this->error_message = $error->getMessage();//"Error al agregar a los movimientos de la caja!";
+            $this->error_message = "Error al agregar a los movimientos de la caja!";
         }
     }
 
