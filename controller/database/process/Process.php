@@ -582,8 +582,8 @@ class Process extends Messenger
          * Deshabilitar los servicios de los clientes
         **/
         foreach ($customers as $customer) {
-            $disabled = $this->disabled_service($customer);
-            if (!$disabled) {
+            $this->disabled_service($customer);
+            if ($this->error) {
                 $this->error = true;
                 $this->error_message = "Error al deshabilitar el servicio del cliente";
                 return;
@@ -1386,7 +1386,6 @@ class Process extends Messenger
             $this->error = true;
             $this->error_message = "Mikrotik error " . $customer["mikrotik_nombre"];
             $this->morosos = false;
-            return false;
         }
 
         /**
